@@ -1,11 +1,17 @@
 #include "connect4.hpp"
+#include "game.hpp"
+#include <c10/core/Device.h>
+#include <c10/core/DeviceType.h>
+#include <c10/core/TensorOptions.h>
 #include <iostream>
 #include <stdexcept> // for invalid_argument
+#include <string>
+#include <unistd.h>
 #include <vector>
 
 using std::vector;
 
-Connect4::Connect4() {
+Connect4::Connect4(torch::Device device) : device(device) {
     reset();
 }
 
@@ -20,7 +26,7 @@ int Connect4::getActionSize() const {
     return COLS;
 }
 
-vector<int> Connect4::getLegalActions() const {
+vector<int> Connect4::get_legal_actions() const {
     vector<int> legalActions;
     for (int col = 0; col < COLS; col++) {
         if (board[0][col] == 0) { // Column not full
@@ -32,7 +38,9 @@ vector<int> Connect4::getLegalActions() const {
 
 void Connect4::step(int action) {
     if (finished || action < 0 || action >= COLS || board[0][action] != 0) {
-        throw std::invalid_argument("Invalid action");
+        throw std::invalid_argument("Invalid action " +
+                                    std::to_string(finished) + " " +
+                                    std::to_string(action));
     }
 
     int placedRow = -1;
@@ -48,7 +56,7 @@ void Connect4::step(int action) {
     if (checkWin(placedRow, placedCol)) {
         finished = true;
         _reward = 1.0f; // winner reward always positive
-    } else if (getLegalActions().empty()) {
+    } else if (get_legal_actions().empty()) {
         finished = true; // Draw
         _reward = 0.0f;
     } else {
@@ -72,19 +80,23 @@ float Connect4::reward() const {
     return _reward;
 }
 
-torch::Tensor Connect4::get_canonical_state() const {
-    torch::Tensor state = torch::zeros({1, 1, ROWS, COLS}, torch::kFloat32);
+GameState Connect4::get_canonical_state() const {
+    torch::Tensor state = torch::zeros({1, ROWS, COLS}, torch::kFloat32);
     for (int row = 0; row < ROWS; row++) {
         for (int col = 0; col < COLS; col++) {
-            // Multiply by currentPlayer to get canonical view
-            state[0][0][row][col] = board[row][col] * currentPlayer;
+            state[0][row][col] = board[row][col] * currentPlayer;
         }
     }
-    return state;
+
+    if (state.device() != device) {
+        state = state.to(device);
+    }
+
+    return GameState(std::move(state));
 }
 
 std::unique_ptr<Game> Connect4::clone() const {
-    auto newGame = std::make_unique<Connect4>();
+    auto newGame = std::make_unique<Connect4>(device);
     newGame->board = board;
     newGame->currentPlayer = currentPlayer;
     newGame->finished = finished;

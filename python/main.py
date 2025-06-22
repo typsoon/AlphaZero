@@ -16,8 +16,8 @@ sys.path.append("../build/engine/")
 from engine_bind import Connect4  # pyright: ignore
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-thread_count = 1
-games_in_each_iteration = 500
+# thread_count = 4
+# games_in_each_iteration = 500
 training_iterations = 20
 minibatch_size = 4096
 replay_buffer_size = 1500 * 35
@@ -32,12 +32,28 @@ def get_args():
         default="AZNetwork.pt",
         help="Path to network file, or AZNetwork for default",
     )
+
     parser.add_argument(
-        "--loop_iterations", type=int, default=1, help="Number of loop iterations"
+        "--games-in-each-iteration",
+        type=int,
+        default=500,
+        help="Number of games in each iteration",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=256, help="Training batch size"
+        "--training-iterations",
+        type=int,
+        default=20,
+        help="Number of training iterations",
     )
+
+    parser.add_argument(
+        "--loop-iterations", type=int, default=1, help="Number of loop iterations"
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=256, help="Training batch size"
+    )
+
+    parser.add_argument("--thread-count", type=int, default=4, help="Thread count")
     return parser.parse_args()
 
 
@@ -56,9 +72,10 @@ if __name__ == "__main__":
         game_type=Connect4,
         trainer_factory=get_trainer,
         loop_iterations=args.loop_iterations,
-        games_in_each_iteration=games_in_each_iteration,
+        games_in_each_iteration=args.games_in_each_iteration,
         replay_buffer_size=replay_buffer_size,
         training_iterations=training_iterations,
         minibatch_size=minibatch_size,
         batch_size=args.batch_size,
+        thread_count=args.thread_count,
     )

@@ -1,7 +1,6 @@
 #ifndef NETWORK_HPP
 #define NETWORK_HPP
 
-#include <string>
 #include <torch/torch.h>
 
 struct ResidualBlockImpl : torch::nn::Module {

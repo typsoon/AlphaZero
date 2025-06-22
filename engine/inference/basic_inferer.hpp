@@ -1,6 +1,7 @@
 #ifndef NETWORK_INFERER_HPP
 #define NETWORK_INFERER_HPP
 
+#include "game.hpp"
 #include "inferer.hpp"
 #include <connect4.hpp>
 #include <memory>
@@ -29,8 +30,8 @@ class NetworkInferer : public Inferer {
   public:
     NetworkInferer(std::shared_ptr<Network> method, torch::Device device);
 
-    std::pair<torch::Tensor, float>
-    infer(torch::Tensor game_state_tensor) override;
+    vector<inference_result>
+    infer(vector<GameState> game_state_tensor) override;
     // Optional: expose device if needed
     // torch::Device device() const;
 };

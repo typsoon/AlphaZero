@@ -11,30 +11,6 @@ using std::make_unique;
 using std::unique_ptr;
 using std::vector;
 
-struct Node {
-    using NodePtr = std::unique_ptr<Node>;
-    unique_ptr<Game> game_state;
-    vector<NodePtr> children;
-    Node *parent = nullptr;
-    int visits = 0;
-    float value = 0.0f;
-    float prior = 0.0f;
-    bool expanded = false;
-
-    Node(std::unique_ptr<Game> state, float prior_value = 0.0f,
-         Node *parent_node = nullptr);
-
-    float Q() const;
-    float UCB(float exploration_weight) const;
-
-    void expand(const std::vector<float> &policy);
-
-    bool is_terminal() const;
-    bool isExpanded() const;
-
-    std::pair<int, Node *> selectChild(float exploration_weight) const;
-};
-
 class MCTS {
     using InfererPtr = unique_ptr<Inferer>;
     InfererPtr network;
@@ -51,13 +27,17 @@ class MCTS {
     MCTS(std::string network_path, torch::Device device, float c_init = 1.25f,
          float c_base = 19652.0f, float eps = 0.25f, float alpha = 0.3f);
 
-    std::vector<float> search(const Game &game, int num_simulations = 800);
+    std::vector<float> search(const Game &game, int num_simulations = 800,
+                              int batch_size = 32);
 
   private:
-    std::pair<std::vector<float>, float>
-    get_policy_value(const Game &game, bool dirichletNoise = false);
+    class Node;
+    void evaluate_batch(std::vector<Node *> &leaves);
 
-    void backpropagate(Node *node, float value);
+    std::vector<float>
+    get_policy_from_logits(torch::Tensor policy_logits,
+                           const std::vector<int> &legal_actions,
+                           bool dirichletNoise = false);
 
     static std::vector<float> sample_dirichlet(const std::vector<float> &alpha);
 };

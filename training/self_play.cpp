@@ -6,6 +6,8 @@
 #include "mcts.hpp"
 #include "mcts/mcts_factory.hpp"
 #include "replay_buffer.hpp"
+#include <c10/core/Device.h>
+#include <c10/core/DeviceType.h>
 #include <memory>
 #include <random>
 #include <vector>
@@ -32,7 +34,7 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
         static std::mt19937 rng(std::random_device{}());
         int action = dist(rng);
 
-        trajectory.emplace_back(canonical_state,
+        trajectory.emplace_back(std::move(canonical_state),
                                 vector_to_tensor(policy).clone(), 0);
         game->step(action);
     }
@@ -50,10 +52,10 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
 
 void self_play(std::shared_ptr<Game> initial_game, string network_path,
                ReplayBuffer &replay_buffer, int num_games, int thread_count) {
+    auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
+    // std::cerr << device << '\n';
 
-    auto game = std::make_unique<Connect4>();
-
-    torch::Device device = torch::Device("cuda");
+    auto game = std::make_unique<Connect4>(device);
 
     auto inferer_factory = NetworkInfererFactory(network_path, device);
     MCTSFactory mcts_factory(inferer_factory);

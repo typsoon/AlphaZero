@@ -1,5 +1,6 @@
 #include "mcts.hpp"
 #include "replay_buffer.hpp"
+#include <c10/core/Device.h>
 #include <game/connect4.hpp>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -31,7 +32,8 @@ PYBIND11_MODULE(engine_bind, m) {
             .def_property_readonly("current_player", &Game::get_current_player);
 
         py::class_<Connect4, Game, std::shared_ptr<Connect4>>(m, "Connect4")
-            .def(py::init<>())
+            .def(py::init<torch::Device>(),
+                 py::arg("device") = torch::Device("cpu"))
             .def_readonly_static("ROWS", &Connect4::ROWS)
             .def_readonly_static("COLS", &Connect4::COLS)
             .def_readonly_static("action_dim", &Connect4::action_dim)
@@ -58,7 +60,7 @@ PYBIND11_MODULE(engine_bind, m) {
                  py::arg("c_init") = 1.25f, py::arg("c_base") = 19652.0f,
                  py::arg("eps") = 0.25f, py::arg("alpha") = 0.3f)
             .def("search", &MCTS::search, py::arg("game"),
-                 py::arg("num_simulations") = 800);
+                 py::arg("num_simulations") = 800, py::arg("batch_size") = 32);
 
     } catch (const std::exception &e) {
         py::print("Exception during binding:", e.what());

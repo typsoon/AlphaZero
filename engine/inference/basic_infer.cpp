@@ -1,9 +1,12 @@
 #include "basic_inferer.hpp"
 #include "inferer.hpp"
+#include <ATen/core/TensorBody.h>
 #include <connect4.hpp>
 #include <mutex>
 
 #include <torch/torch.h> // For torch::Tensor and device
+#include <utility>
+#include <vector>
 
 NetworkInferer::NetworkInferer(std::shared_ptr<Network> network,
                                torch::Device device)
@@ -19,16 +22,43 @@ NetworkInferer::NetworkInferer(std::shared_ptr<Network> network,
 }
 
 // infer method implementation
-std::pair<torch::Tensor, float>
-NetworkInferer::infer(torch::Tensor game_state_tensor) {
-    auto result = infer_method({game_state_tensor});
+vector<inference_result>
+NetworkInferer::infer(std::vector<GameState> game_states) {
+    if (game_states.empty()) {
+        return {};
+    }
+
+    auto batch_size = game_states.size();
+    vector<Tensor> game_states_tensors;
+    game_states_tensors.reserve(batch_size);
+    for (auto &&state : game_states) {
+        game_states_tensors.emplace_back(std::move(state));
+    }
+
+    auto options = game_states_tensors[0].options();
+    auto tensor_shape = game_states_tensors[0].sizes().vec();
+
+    tensor_shape.insert(tensor_shape.begin(), batch_size);
+
+    torch::Tensor batched = torch::empty(tensor_shape, options);
+
+    for (int i = 0; i < batch_size; ++i) {
+        batched[i].copy_(game_states_tensors[i]);
+    }
+
+    auto result = infer_method({batched});
     auto outputs = result.toTuple()->elements();
     torch::Tensor policy = outputs[0].toTensor();
     torch::Tensor value = outputs[1].toTensor();
 
-    return std::make_pair(std::move(policy), value.item<float>());
-}
+    std::vector<inference_result> out;
+    out.reserve(batch_size);
+    for (int64_t i = 0; i < batch_size; ++i) {
+        out.push_back({policy[i], value[i].item<float>()});
+    }
 
+    return out;
+}
 // Constructor for NetworkInfererFactory
 NetworkInfererFactory::NetworkInfererFactory(
     const std::string &network_file_path, torch::Device device)
