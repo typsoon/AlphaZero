@@ -166,35 +166,75 @@ class GameClient:
 
 
 class Connect4GUI:
-    """Tkinter UI for Connect-4 game."""
+    """Tkinter UI for Connect-4 game with improved styling."""
 
-    def __init__(self, root: tk.Tk, client: GameClient):
+    def __init__(
+        self,
+        root: tk.Tk,
+        client: GameClient,
+        red_color: str = "#e62a50",
+        yellow_color: str = "#f1c40f",
+        board_color: str = "#189eeb",
+        bg_color: str = "#fdfdfd",
+    ):
         """Initialize GUI.
 
         Args:
             root: Tkinter root window
             client: Game client instance
+            red_color: Color for player 1 (human)
+            yellow_color: Color for player 2 (AI)
+            board_color: Color for the board
+            bg_color: Background color
         """
         self.root = root
         self.client = client
         self.board = None
         self.is_terminal = False
         self.waiting_for_server = False
+        
+        self.colors = {
+            "red": red_color,
+            "yellow": yellow_color,
+            "board": board_color,
+            "bg": bg_color,
+            "outline": "#dddddd",
+            "text": "black",
+            "error": "red",
+            "draw": "gray"
+        }
 
+        canvas_height = ROWS * CELL_SIZE + 60
         self.canvas = tk.Canvas(
             root,
             width=COLS * CELL_SIZE,
-            height=ROWS * CELL_SIZE + 50,
-            bg="white",
+            height=canvas_height,
+            bg=self.colors["bg"],
+            highlightthickness=0,
+            bd=0
         )
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self._on_click)
         self.root.title("Connect 4 vs AlphaZero")
-
-        self.status_label = tk.Label(root, text="Loading game state...", fg="black")
-        self.status_label.pack()
+        
+        self.status_text_id = None
+        self._draw_status("Loading game state...", self.colors["text"])
 
         self.root.after(500, self._refresh_and_draw)
+
+    def _draw_status(self, message: str, color: str = None):
+        """Draw status message on canvas."""
+        if color is None:
+            color = self.colors["text"]
+        if self.status_text_id is not None:
+            self.canvas.delete(self.status_text_id)
+        self.status_text_id = self.canvas.create_text(
+            CELL_SIZE * COLS // 2,
+            ROWS * CELL_SIZE + 30,
+            text=message,
+            font=("Helvetica", 14, "bold"),
+            fill=color
+        )
 
     def _on_click(self, event):
         """Handle canvas click."""
@@ -212,7 +252,7 @@ class Connect4GUI:
             return
 
         self.waiting_for_server = True
-        self.status_label.config(text="Sending move...", fg="blue")
+        self._draw_status("Sending move...", "blue")
         self.root.after(100, lambda: self._send_move(col))
 
     def _send_move(self, column: int):
@@ -220,33 +260,32 @@ class Connect4GUI:
         try:
             response = self.client.make_move(column)
             if response.get("status") == "error":
-                self.status_label.config(
-                    text=f"Error: {response.get('message')}",
-                    fg="red",
+                self._draw_status(
+                    f"Error: {response.get('message')}",
+                    self.colors["error"],
                 )
             else:
                 self.board = response.get("board")
                 self.is_terminal = response.get("is_terminal", False)
 
                 if self.is_terminal:
-                    self.status_label.config(
-                        text="Game Over! Click to refresh.",
-                        fg="red",
-                    )
+                    self._handle_game_end()
                 else:
-                    self.status_label.config(
-                        text="Your turn",
-                        fg="green",
-                    )
+                    self._draw_status("Your turn", "black")
 
                 self._draw_board()
         except Exception as e:
-            self.status_label.config(
-                text=f"Server error: {e}",
-                fg="red",
-            )
+            logger.error(f"Server error: {e}", exc_info=True)
+            self._draw_status(f"Server error: {e}", self.colors["error"])
         finally:
             self.waiting_for_server = False
+
+    def _handle_game_end(self):
+        """Handle game over state."""
+        # Determine winner from the board
+        # In Connect4, the current_player switches after winning move
+        # So we need to check who actually won
+        self._draw_status("Game Over! Click to reset.", self.colors["error"])
 
     def _reset_game(self):
         """Reset the game."""
@@ -254,55 +293,41 @@ class Connect4GUI:
             response = self.client.reset_game()
             if response.get("status") == "ok":
                 self.is_terminal = False
-                self.status_label.config(
-                    text="Game reset! Fetching new state...",
-                    fg="blue",
-                )
+                self._draw_status("Game reset! Fetching new state...", "blue")
                 # Fetch fresh game state
                 self.root.after(200, self._refresh_and_draw)
             else:
-                self.status_label.config(
-                    text=f"Reset failed: {response.get('message')}",
-                    fg="red",
+                self._draw_status(
+                    f"Reset failed: {response.get('message')}",
+                    self.colors["error"]
                 )
         except Exception as e:
-            self.status_label.config(
-                text=f"Reset error: {e}",
-                fg="red",
-            )
+            logger.error(f"Reset error: {e}", exc_info=True)
+            self._draw_status(f"Reset error: {e}", self.colors["error"])
 
     def _refresh_and_draw(self):
         """Refresh game state and draw board."""
         logger.info("Refreshing")
         try:
-            logger.info("Refreshing")
             response = self.client.get_status()
             if response.get("status") == "ok":
                 self.board = response.get("board")
                 self.is_terminal = response.get("is_terminal", False)
 
                 if self.is_terminal:
-                    self.status_label.config(
-                        text="Game Over! Click to refresh.",
-                        fg="red",
-                    )
+                    self._handle_game_end()
                 else:
-                    self.status_label.config(
-                        text="Your turn - click a column",
-                        fg="green",
-                    )
+                    self._draw_status("Your turn - click a column", "black")
 
                 self._draw_board()
             else:
-                self.status_label.config(
-                    text=f"Error: {response.get('message')}",
-                    fg="red",
+                self._draw_status(
+                    f"Error: {response.get('message')}",
+                    self.colors["error"]
                 )
         except Exception as e:
-            self.status_label.config(
-                text=f"Connection error: {e}",
-                fg="red",
-            )
+            logger.error(f"Connection error: {e}", exc_info=True)
+            self._draw_status(f"Connection error: {e}", self.colors["error"])
             self.root.after(1000, self._refresh_and_draw)
             return
 
@@ -310,8 +335,8 @@ class Connect4GUI:
         self.root.after(2000, self._refresh_and_draw)
 
     def _draw_board(self):
-        """Draw the game board."""
-        self.canvas.delete("all")
+        """Draw the game board with improved styling."""
+        self.canvas.delete("board")
 
         if self.board is None:
             return
@@ -324,26 +349,39 @@ class Connect4GUI:
                 y1 = y0 + CELL_SIZE
 
                 self.canvas.create_rectangle(
-                    x0, y0, x1, y1, fill="blue", outline="black"
+                    x0, y0, x1, y1,
+                    fill=self.colors["board"],
+                    outline=self.colors["bg"],
+                    width=2,
+                    tags="board"
                 )
 
                 cell = self.board[r][c]
-                if cell == 1:
-                    color = "red"
-                elif cell == -1:
-                    color = "yellow"
-                else:
-                    color = "white"
-
-                self.canvas.create_oval(
-                    x0 + 5, y0 + 5, x1 - 5, y1 - 5, fill=color, outline="black"
+                token_color = (
+                    self.colors["bg"] if cell == 0 else
+                    self.colors["red"] if cell == 1 else
+                    self.colors["yellow"]
                 )
 
-        # Column numbers
+                self.canvas.create_oval(
+                    x0 + 10, y0 + 10, x1 - 10, y1 - 10,
+                    fill=token_color,
+                    outline=self.colors["outline"],
+                    width=1,
+                    tags="board"
+                )
+
+        # Column numbers (0-based for clarity)
         for c in range(COLS):
             x = c * CELL_SIZE + CELL_SIZE // 2
-            y = ROWS * CELL_SIZE + 25
-            self.canvas.create_text(x, y, text=str(c), font=("Arial", 14, "bold"))
+            y = ROWS * CELL_SIZE + 10
+            self.canvas.create_text(
+                x, y,
+                text=str(c),
+                font=("Helvetica", 12),
+                fill="#666",
+                tags="board"
+            )
 
 
 def main():
