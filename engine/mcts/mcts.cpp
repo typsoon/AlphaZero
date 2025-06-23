@@ -20,6 +20,8 @@ struct MCTS::Node {
     float value = 0.0f;
     float prior = 0.0f;
     bool expanded = false;
+    int virtual_loss_count = 0;
+    static constexpr float VL = 1.0f;
 
     Node(std::unique_ptr<Game> state, float prior_value = 0.0f,
          Node *parent_node = nullptr);
@@ -34,13 +36,14 @@ struct MCTS::Node {
 
     std::pair<int, Node *> select_child(float exploration_weight) const;
 
-    static void backpropagate(Node *node, float value);
+    static void backpropagate(Node *node, float value, bool vloss = false);
 };
 
-void MCTS::Node::backpropagate(Node *node, float value) {
+void MCTS::Node::backpropagate(Node *node, float value, bool vloss) {
     while (node) {
         node->visits++;
         node->value += value;
+        if (vloss) node->virtual_loss_count--;
         node = node->parent;
         value = -value;
     }
@@ -53,14 +56,17 @@ MCTS::Node::Node(std::unique_ptr<Game> state, float prior_value,
 }
 
 float MCTS::Node::Q() const {
-    return visits > 0 ? value / visits : 0.0f;
+    // return visits > 0 ? value / visits : 0.0f;
+    float adj_value = value - virtual_loss_count * VL;
+    int adj_visits = visits + virtual_loss_count;
+    return adj_visits > 0 ? adj_value / adj_visits : 0.0f;
 }
 
 float MCTS::Node::UCB(float exploration_weight) const {
     if (!parent)
-        return 0;
-    return Q() + exploration_weight * prior * std::sqrt(parent->visits) /
-                     (1 + visits);
+        return 0.0f;
+    return Q() + exploration_weight * prior * std::sqrt(parent->visits + parent->virtual_loss_count) /
+                     (1 + visits + virtual_loss_count);
 }
 
 void MCTS::Node::expand(const std::vector<float> &policy) {
@@ -140,7 +146,7 @@ void MCTS::evaluate_batch(std::vector<Node *> &leaves) {
             policy_tensor, node->game_state->get_legal_actions(), true);
 
         node->expand(policy);
-        Node::backpropagate(node, value);
+        Node::backpropagate(node, value, true);
     }
 }
 
@@ -166,15 +172,19 @@ std::vector<float> MCTS::search(const Game &game, int num_simulations,
 
             while (node->is_expanded() && !node->is_terminal()) {
                 auto [best_action, best_child] = node->select_child(c_puct);
+                node->virtual_loss_count++;
                 node = best_child;
                 c_puct =
                     std::log((1 + node->visits + c_base) / c_base) + c_init;
             }
 
+            node->virtual_loss_count++;
+
             if (!node->is_terminal()) {
                 leaves.push_back(node);
-            } else {
-                Node::backpropagate(node, node->game_state->reward());
+            } 
+            else {
+                Node::backpropagate(node, node->game_state->reward(), true);
             }
         }
 

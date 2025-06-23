@@ -14,7 +14,7 @@ from engine_bind import Connect4  # pyright: ignore
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # thread_count = 4
 # games_in_each_iteration = 500
-training_iterations = 20
+training_iterations = 200
 minibatch_size = 4096
 replay_buffer_size = 1500 * 35
 
@@ -32,18 +32,18 @@ def get_args():
     parser.add_argument(
         "--games-in-each-iteration",
         type=int,
-        default=500,
+        default=400,
         help="Number of games in each iteration",
     )
     parser.add_argument(
         "--training-iterations",
         type=int,
-        default=20,
+        default=200,
         help="Number of training iterations",
     )
 
     parser.add_argument(
-        "--loop-iterations", type=int, default=1, help="Number of loop iterations"
+        "--loop-iterations", type=int, default=100, help="Number of loop iterations"
     )
     parser.add_argument(
         "--batch-size", type=int, default=256, help="Training batch size"

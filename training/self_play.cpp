@@ -27,6 +27,8 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
 
     while (!game->is_terminal()) {
         auto canonical_state = game->get_canonical_state();
+        torch::Tensor game_state_tensor = std::move(canonical_state);
+        game_state_tensor = game_state_tensor.unsqueeze(0);  
         auto policy = mcts->search(*game);
 
         // Pick action based on policy probability distribution
@@ -34,7 +36,7 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
         static std::mt19937 rng(std::random_device{}());
         int action = dist(rng);
 
-        trajectory.emplace_back(std::move(canonical_state),
+        trajectory.emplace_back(game_state_tensor,
                                 vector_to_tensor(policy).clone(), 0);
         game->step(action);
     }
@@ -42,9 +44,8 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
     float value = game->reward();
 
     for (size_t i = 0; i < trajectory.size(); ++i) {
-        // update last element in tuple with value or -value depending on i
-        // parity
-        (trajectory[i]).reward = (i % 2 == 0) ? value : -value;
+        (trajectory[i]).reward = value;
+        value = -value;
     }
 
     replay_buffer.add(trajectory);
@@ -62,6 +63,7 @@ void self_play(std::shared_ptr<Game> initial_game, string network_path,
 
     std::atomic<int> games_played{0};
     std::mutex cout_mutex;
+    std::atomic<int> games_finished{0};
 
     auto worker = [&]() {
         while (true) {
@@ -73,7 +75,7 @@ void self_play(std::shared_ptr<Game> initial_game, string network_path,
             play_game(game->clone(), std::move(mcts), replay_buffer);
             {
                 std::lock_guard<std::mutex> lock(cout_mutex);
-                std::cout << "Games played: " << current + 1 << "/" << num_games
+                std::cout << "Games played: " << games_finished++ << "/" << num_games
                           << "\n";
             }
         }

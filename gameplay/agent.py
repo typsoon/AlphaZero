@@ -34,15 +34,12 @@ class UserAgent(Agent):
 
         self.selected_column = None
         self.move_ready.clear()
-
-        print("Waiting for move: ")
+        print("Waiting for move: (press 1-7)")
         self.move_ready.wait()
-
-        assert self.selected_column is not None
         return self.selected_column
 
     def _find_root_widget(self) -> tk.Tk:
-        return tk._default_root  # pyright: ignore
+        return tk._default_root  # assumes already created
 
 
 class AlphaZeroAgent(Agent):

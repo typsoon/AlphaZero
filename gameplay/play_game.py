@@ -1,6 +1,6 @@
-from agent import AlphaZeroAgent, UserAgent
 import argparse
 
+from agent import AlphaZeroAgent, UserAgent
 from play_game_utils import play_connect4
 
 
@@ -19,6 +19,10 @@ if __name__ == "__main__":
     parsed_args = parse_args()
     alpha_zero_agent = AlphaZeroAgent(socket_path=parsed_args.socket)
 
+    az_agent = AlphaZeroAgent(args.network_path, torch.device(args.device))
     user_agent = UserAgent()
 
-    play_connect4(alpha_zero_agent, user_agent)
+    if args.user_first:
+        play_connect4(user_agent, az_agent)
+    else:
+        play_connect4(az_agent, user_agent)
