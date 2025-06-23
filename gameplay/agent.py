@@ -50,5 +50,5 @@ class AlphaZeroAgent(Agent):
         self.player = player
 
     def act(self, game_state) -> int:
-        policy = self.mcts.search(game_state)
+        policy = self.mcts.search(game_state, 2000, 1)
         return int(argmax(np.array(policy)))

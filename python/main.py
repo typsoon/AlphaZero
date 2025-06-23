@@ -18,7 +18,7 @@ from engine_bind import Connect4  # pyright: ignore
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # thread_count = 4
 # games_in_each_iteration = 500
-training_iterations = 200
+training_iterations = 2000
 minibatch_size = 4096
 replay_buffer_size = 1500 * 35
 
@@ -29,7 +29,7 @@ def get_args():
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default="AZNetwork.pt",
+        default="AZNetwork.pt_trained",
         help="Path to network file, or AZNetwork for default",
     )
 
@@ -42,7 +42,7 @@ def get_args():
     parser.add_argument(
         "--training-iterations",
         type=int,
-        default=200,
+        default=2000,
         help="Number of training iterations",
     )
 
