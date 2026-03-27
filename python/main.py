@@ -8,11 +8,7 @@ from train import self_play_and_train_loop
 import argparse
 import os
 
-import sys
-
-sys.path.append("../build/training/")
-sys.path.append("../build/engine/")
-
+from pybind import engine_bind
 from engine_bind import Connect4  # pyright: ignore
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -53,7 +49,7 @@ def get_args():
         "--batch-size", type=int, default=256, help="Training batch size"
     )
 
-    parser.add_argument("--thread-count", type=int, default=4, help="Thread count")
+    parser.add_argument("--thread-count", type=int, default=os.cpu_count(), help="Thread count")
     return parser.parse_args()
 
 

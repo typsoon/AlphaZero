@@ -3,7 +3,10 @@ from agent import Agent
 
 import sys
 
-sys.path.append("../build/engine/")
+proj_root = Path(__file__).parent
+build_dir = proj_root / "build"
+
+sys.path.append(str(build_dir / "engine"))
 
 from engine_bind import Game, Connect4  # pyright: ignore
 

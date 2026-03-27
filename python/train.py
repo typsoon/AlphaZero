@@ -10,8 +10,7 @@ import sys
 from tqdm import tqdm as base_tqdm
 from tqdm.notebook import tqdm as notebook_tqdm
 
-sys.path.append("../build/training/")
-sys.path.append("../build/engine/")
+from pybind import self_play_bind, engine_bind
 from self_play_bind import self_play  # pyright: ignore
 from engine_bind import Game, ReplayBuffer  # pyright: ignore
 

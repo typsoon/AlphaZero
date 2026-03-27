@@ -15,6 +15,64 @@ Connect4::Connect4(torch::Device device) : device(device) {
     reset();
 }
 
+Connect4::Connect4(const std::vector<std::vector<int>>& initial_board, 
+                   torch::Device device) 
+    : device(device) {
+    // Validate board dimensions
+    if (initial_board.size() != ROWS) {
+        throw std::invalid_argument("Board must have " + std::to_string(ROWS) + " rows");
+    }
+    for (const auto& row : initial_board) {
+        if (row.size() != COLS) {
+            throw std::invalid_argument("Board must have " + std::to_string(COLS) + " columns");
+        }
+    }
+    
+    // Copy the board
+    board = initial_board;
+    
+    // Determine current player by counting pieces
+    int player1_count = 0;
+    int player2_count = 0;
+    for (const auto& row : board) {
+        for (int cell : row) {
+            if (cell == 1) player1_count++;
+            else if (cell == -1) player2_count++;
+        }
+    }
+    
+    // Player 1 goes first, so if counts are equal, it's player 1's turn
+    currentPlayer = (player1_count == player2_count) ? 1 : -1;
+    
+    // Check if game is already finished
+    finished = false;
+    _reward = 0.0f;
+    
+    // Check for wins
+    for (int row = 0; row < ROWS; row++) {
+        for (int col = 0; col < COLS; col++) {
+            if (board[row][col] != 0 && checkWin(row, col)) {
+                finished = true;
+                _reward = (board[row][col] == currentPlayer) ? 1.0f : -1.0f;
+                return;
+            }
+        }
+    }
+    
+    // Check for draw
+    bool boardFull = true;
+    for (int col = 0; col < COLS; col++) {
+        if (board[0][col] == 0) {
+            boardFull = false;
+            break;
+        }
+    }
+    if (boardFull) {
+        finished = true;
+        _reward = 0.0f;
+    }
+}
+
 void Connect4::reset() {
     board = vector<vector<int>>(ROWS, vector<int>(COLS, 0));
     currentPlayer = 1; // Player 1 starts

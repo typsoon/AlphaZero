@@ -67,18 +67,36 @@ class AlphaZeroAgent(Agent):
                 f"Make sure the server is running. Error: {e}"
             )
 
-    def _send_inference_request(self, game_state) -> list:
+    def _reconnect(self):
+        """Reconnect to the inference server."""
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            self.sock.connect(self.socket_path)
+        except (ConnectionRefusedError, FileNotFoundError) as e:
+            raise RuntimeError(
+                f"Failed to reconnect to inference server at {self.socket_path}. "
+                f"Make sure the server is running. Error: {e}"
+            )
+
+    def _send_inference_request(self, game_state, retry=True) -> list:
         """Send inference request to HTTP server over persistent Unix socket.
 
         Args:
             game_state: Game state object to get predictions for
+            retry: Whether to retry once on connection failure
 
         Returns:
             Policy array from the inference server
 
         Raises:
             RuntimeError: If server returns error or response is malformed
-            BrokenPipeError: If connection is lost
+            BrokenPipeError: If connection is lost and retry fails
         """
         request_data = {
             "game_state": game_state,
@@ -93,26 +111,53 @@ class AlphaZeroAgent(Agent):
             "\r\n" + json.dumps(request_data)
         )
 
-        self.sock.sendall(http_request.encode("utf-8"))
+        try:
+            self.sock.sendall(http_request.encode("utf-8"))
+        except (BrokenPipeError, ConnectionResetError, OSError) as e:
+            if retry:
+                # Connection lost, try to reconnect once
+                print(f"Connection to inference server lost, reconnecting... ({e})")
+                self._reconnect()
+                return self._send_inference_request(game_state, retry=False)
+            else:
+                raise RuntimeError(f"Failed to send request after reconnection: {e}")
 
-        # Read response with size limit to prevent stack smashing
-        max_response_size = 1024 * 1024  # 1 MB limit
+        # Read response headers first
         response = b""
-        while len(response) < max_response_size:
+        while b"\r\n\r\n" not in response:
             chunk = self.sock.recv(4096)
             if not chunk:
-                break
+                raise RuntimeError("Connection closed while reading headers")
             response += chunk
-
-        if len(response) >= max_response_size:
-            raise RuntimeError("Response too large (exceeds 1 MB limit)")
-
+        
+        # Parse headers to get Content-Length
         response_str = response.decode("utf-8")
         headers_end = response_str.find("\r\n\r\n")
-        if headers_end == -1:
-            raise RuntimeError("Invalid HTTP response: missing headers/body separator")
-
-        body = response_str[headers_end + 4 :]
+        headers = response_str[:headers_end]
+        
+        content_length = None
+        for line in headers.split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                content_length = int(line.split(":", 1)[1].strip())
+                break
+        
+        if content_length is None:
+            raise RuntimeError("Missing Content-Length header in inference response")
+        
+        # Read response body based on Content-Length
+        body_bytes = response[headers_end + 4:]
+        max_response_size = 1024 * 1024  # 1 MB limit
+        
+        if content_length > max_response_size:
+            raise RuntimeError(f"Response too large: {content_length} bytes (max 1 MB)")
+        
+        while len(body_bytes) < content_length:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                raise RuntimeError("Connection closed while reading body")
+            body_bytes += chunk
+        
+        body = body_bytes[:content_length].decode("utf-8")
 
         # Safe deserialization with depth and type validation
         try:

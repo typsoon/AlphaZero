@@ -7,12 +7,8 @@ from typing import Type
 
 import torch
 from torch import nn
-import sys
 
-sys.path.append("../build/training/")
-sys.path.append("../build/engine/")
-
-import self_play_bind  # pyright: ignore
+from pybind import self_play_bind, engine_bind  # pyright: ignore
 from engine_bind import Connect4, Game, ReplayBuffer  # pyright: ignore
 
 

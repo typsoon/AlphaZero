@@ -54,3 +54,16 @@ target_include_directories(engine_bind PRIVATE
     ${Python3_INCLUDE_DIRS}
     ${TORCH_INCLUDE_DIRS}
 )
+
+# Inference server executable
+add_executable(inference_server inference_server.cpp)
+target_link_libraries(inference_server
+    PRIVATE
+        engine
+        "${TORCH_LIBRARIES}"
+)
+
+target_include_directories(inference_server PRIVATE
+    ${TORCH_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)

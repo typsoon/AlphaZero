@@ -2,13 +2,11 @@ from typing import Tuple, Type
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pathlib import Path
 
 
-import sys
-
-sys.path.append("../build/training/")
-sys.path.append("../build/engine/")
-from engine_bind import Game  # pyright: ignore
+from pybind import engine_bind  # pyright: ignore
+from engine_bind import Game
 
 
 class ResidualBlock(nn.Module):
