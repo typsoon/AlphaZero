@@ -27,6 +27,7 @@ set(CMAKE_BUILD_RPATH "$ENV{HOME}/libs/libtorch/lib")
 project(my_ai_engine)
 add_subdirectory(engine)
 add_subdirectory(training)
+add_subdirectory(inference_server)
 
 # add_executable(self_play training/self_play.cpp)
 # target_link_libraries(self_play
