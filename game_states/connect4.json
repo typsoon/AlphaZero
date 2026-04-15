@@ -1,0 +1,28 @@
+{
+  "$id": "alphazero:game-state:connect4",
+  "type": "object",
+  "required": [
+    "board"
+  ],
+  "properties": {
+    "board": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "array",
+        "minItems": 7,
+        "maxItems": 7,
+        "items": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

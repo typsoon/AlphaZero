@@ -1,0 +1,18 @@
+{
+  "$id": "alphazero:game-state:connect4-policy",
+  "type": "object",
+  "required": [
+    "policy"
+  ],
+  "properties": {
+    "policy": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "number"
+      }
+    }
+  },
+  "additionalProperties": false
+}
