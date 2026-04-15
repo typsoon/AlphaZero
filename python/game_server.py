@@ -5,9 +5,8 @@ import argparse
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from engine_bind import Connect4  # pyright: ignore
-
 from agent import AlphaZeroAgent
+from connect4 import Connect4
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
