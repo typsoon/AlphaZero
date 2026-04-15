@@ -19,8 +19,8 @@ if(NOT TARGET CUDA::nvToolsExt)
   set_target_properties(CUDA::nvToolsExt PROPERTIES IMPORTED_LOCATION "")
 endif()
 
-# Enable RPATH for local library path
-set(CMAKE_BUILD_RPATH "$ENV{HOME}/libs/libtorch/lib")
+# Use link paths automatically for RPATH so that it works dynamically based on Torch_DIR
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # Add the executable
 

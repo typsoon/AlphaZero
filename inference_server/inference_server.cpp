@@ -1,17 +1,20 @@
 #include "args_parser/inference_server_args.hpp"
-#include "model_wrapper/connect4_model_wrapper.hpp"
 #include "model_wrapper/model_wrapper.hpp"
+#include "schema_validator/schema_validator.hpp"
 #include "server/server.hpp"
+#include <filesystem>
 #include <iostream>
 
 namespace {
 
-constexpr int PORT = 4567;
-
 int run_server(const InferenceServerArgs &args) {
-  // TODO: replace with inference server startup once C++ service is wired.
-  set_up_and_run_server<ModelWrapper>(args.socket,
-                                      get_connect4_model_wrapper());
+  auto schema_path = std::filesystem::path(ALPHAZERO_REPO_ROOT) /
+                     "game_states" / "connect4.json";
+
+  set_up_and_run_server<ModelWrapper, SchemaValidator>(
+      args.socket,
+      create_connect4_model_wrapper(args.network_path, args.device),
+      get_schema_validator(schema_path));
   std::cout << "network_path=" << args.network_path << '\n'
             << "device=" << args.device << '\n'
             << "socket=" << args.socket << '\n';

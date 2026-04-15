@@ -176,12 +176,16 @@ class AlphaZeroAgent(Agent):
         if not isinstance(response_data, dict):
             raise RuntimeError("Response must be a JSON object")
 
-        if response_data.get("status") != "success":
+        if response_data.get("status") == "error":
             raise RuntimeError(
                 f"Server error: {response_data.get('message', 'Unknown error')}"
             )
+        if "error" in response_data:
+            raise RuntimeError(f"Server error: {response_data.get('error')}")
 
-        policy = response_data.get("policy", [])
+        policy = response_data.get("policy")
+        if policy is None:
+            raise RuntimeError("Missing policy in inference response")
         if not isinstance(policy, list):
             raise RuntimeError("Policy must be a list")
 
