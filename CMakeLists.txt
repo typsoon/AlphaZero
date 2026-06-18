@@ -22,6 +22,15 @@ endif()
 # Use link paths automatically for RPATH so that it works dynamically based on Torch_DIR
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
+include(FetchContent)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+FetchContent_Declare(
+  spdlog
+  GIT_REPOSITORY https://github.com/gabime/spdlog.git
+  GIT_TAG v1.12.0
+)
+FetchContent_MakeAvailable(spdlog)
+
 # Add the executable
 
 project(my_ai_engine)

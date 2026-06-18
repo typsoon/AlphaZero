@@ -1,5 +1,5 @@
 find_package(Torch REQUIRED)
 file(GLOB GAME_SRC CONFIGURE_DEPENDS *.cpp)
 add_library(game STATIC ${GAME_SRC})
-target_link_libraries(game "${TORCH_LIBRARIES}")
+target_link_libraries(game "${TORCH_LIBRARIES}" spdlog::spdlog)
 target_include_directories(game PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

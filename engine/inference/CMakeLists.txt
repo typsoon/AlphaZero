@@ -1,5 +1,5 @@
 find_package(Torch REQUIRED)
 file(GLOB INF_SRC CONFIGURE_DEPENDS *.cpp)
 add_library(inference STATIC ${INF_SRC})
-target_link_libraries(inference "${TORCH_LIBRARIES}" game)
+target_link_libraries(inference "${TORCH_LIBRARIES}" game spdlog::spdlog)
 target_include_directories(inference PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

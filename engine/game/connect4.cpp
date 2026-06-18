@@ -3,7 +3,7 @@
 #include <c10/core/Device.h>
 #include <c10/core/DeviceType.h>
 #include <c10/core/TensorOptions.h>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <stdexcept> // for invalid_argument
 #include <string>
 #include <unistd.h>
@@ -163,6 +163,7 @@ std::unique_ptr<Game> Connect4::clone() const {
 }
 
 void Connect4::render() const {
+    std::string board_str = "\n";
     for (int row = 0; row < ROWS; row++) {
         for (int col = 0; col < COLS; col++) {
             char piece;
@@ -172,11 +173,13 @@ void Connect4::render() const {
                 piece = 'O';
             else
                 piece = '.';
-            std::cout << piece << " ";
+            board_str += piece;
+            board_str += " ";
         }
-        std::cout << std::endl;
+        board_str += "\n";
     }
-    std::cout << "Current Player: " << (currentPlayer == 1 ? "X" : "O") << std::endl;
+    board_str += "Current Player: " + std::string(currentPlayer == 1 ? "X" : "O");
+    spdlog::info(board_str);
 }
 
 bool Connect4::checkWin(int row, int col) const {

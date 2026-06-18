@@ -2,7 +2,7 @@
 #include "network.hpp"
 #include "replay_buffer.hpp"
 #include <cassert>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <torch/torch.h>
 
 AlphaZeroTrainer::AlphaZeroTrainer(AlphaZeroNetwork &network, ReplayBuffer &replay_buffer,
@@ -48,8 +48,10 @@ void AlphaZeroTrainer::train(size_t train_steps, size_t batch_size) {
         optimizer.step();
 
 #ifndef NDEBUG
-        std::cout << "Step: " << step << ", Policy Loss: " << policy_loss.item<float>()
-                  << ", Value Loss: " << value_loss.item<float>() << std::endl;
+        spdlog::info("Step: {}, Policy Loss: {}, Value Loss: {}",
+                     step,
+                     policy_loss.item<float>(),
+                     value_loss.item<float>());
 #endif
     }
 }

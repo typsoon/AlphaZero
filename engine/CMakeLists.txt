@@ -23,6 +23,7 @@ target_link_libraries(engine
         inference
         mcts
         utils
+        spdlog::spdlog
         "${TORCH_LIBRARIES}"
 )
 
@@ -33,6 +34,7 @@ target_include_directories(engine PUBLIC
 
 add_executable(test_libtorch test_libtorch.cpp)
 target_link_libraries(test_libtorch
+  spdlog::spdlog
   "${TORCH_LIBRARIES}"
 )
 

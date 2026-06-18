@@ -4,7 +4,7 @@
 #include <connect4.hpp>
 #include <exception>
 #include <filesystem>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <mutex>
 
 #include <torch/torch.h> // For torch::Tensor and device
@@ -61,13 +61,15 @@ vector<inference_result> NetworkInferer::infer(std::vector<GameState> game_state
 }
 
 typedef torch::jit::script::Module Network;
-std::shared_ptr<Network> get_network_func(std::string network_file_path, torch::Device device) {
-    if (std::filesystem::exists(network_file_path)) {
-        return std::make_shared<Network>(torch::jit::load(network_file_path, device));
-    } else {
-        std::cout << "File " << network_file_path << " doesn't exist\n";
-        throw std::exception();
-    }
+std::shared_ptr<Network> get_network_func(std::string network_file_path,
+                                          torch::Device device) {
+  if (std::filesystem::exists(network_file_path)) {
+    return std::make_shared<Network>(
+        torch::jit::load(network_file_path, device));
+  } else {
+    spdlog::error("File {} doesn't exist", network_file_path);
+    throw std::exception();
+  }
 }
 
 // Constructor for NetworkInfererFactory

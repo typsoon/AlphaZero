@@ -22,6 +22,7 @@ target_include_directories(self_play_bind PRIVATE
 
 target_link_libraries(self_play_bind PRIVATE
     engine
+    spdlog::spdlog
     "${TORCH_LIBRARIES}"
 )
 

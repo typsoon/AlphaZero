@@ -8,3 +8,4 @@ build/
 *.npz
 **/node_modules
 .doit.db
+gameplay_client/logs/

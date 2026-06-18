@@ -1,8 +1,10 @@
 #include "model_wrapper.hpp"
 
+#include <chrono>
 #include <connect4.hpp>
 #include <mcts.hpp>
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <torch/torch.h>
 #include <utility>
 #include <vector>
@@ -38,7 +40,15 @@ public:
     }
 
     Connect4 game(board, device);
+
+    auto start = std::chrono::high_resolution_clock::now();
     const auto policy = mcts.search(game);
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+
+    // TODO: Make this log better
+    spdlog::info("Elapsed time: {} ms", duration.count());
 
     return nlohmann::json{{"policy", policy}}.dump();
   }

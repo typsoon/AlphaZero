@@ -11,6 +11,7 @@
 #include <memory>
 #include <random>
 #include <vector>
+#include <spdlog/spdlog.h>
 
 using std::string;
 
@@ -60,7 +61,6 @@ void self_play(std::shared_ptr<Game> initial_game, string network_path, ReplayBu
     MCTSFactory mcts_factory(inferer_factory);
 
     std::atomic<int> games_played{0};
-    std::mutex cout_mutex;
     std::atomic<int> games_finished{0};
 
     auto worker = [&]() {
@@ -72,8 +72,7 @@ void self_play(std::shared_ptr<Game> initial_game, string network_path, ReplayBu
             auto mcts = mcts_factory.get_mcts();
             play_game(game->clone(), std::move(mcts), replay_buffer);
             {
-                std::lock_guard<std::mutex> lock(cout_mutex);
-                std::cout << "Games played: " << games_finished++ << "/" << num_games << "\n";
+                spdlog::info("Games played: {}/{}", games_finished++, num_games);
             }
         }
     };

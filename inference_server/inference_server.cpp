@@ -3,7 +3,7 @@
 #include "schema_validator/schema_validator.hpp"
 #include "server/server.hpp"
 #include <filesystem>
-#include <iostream>
+#include <spdlog/spdlog.h>
 
 namespace {
 
@@ -15,9 +15,7 @@ int run_server(const InferenceServerArgs &args) {
       args.socket,
       create_connect4_model_wrapper(args.network_path, args.device),
       get_schema_validator(schema_path));
-  std::cout << "network_path=" << args.network_path << '\n'
-            << "device=" << args.device << '\n'
-            << "socket=" << args.socket << '\n';
+  spdlog::info("network_path={}\ndevice={}\nsocket={}", args.network_path, args.device, args.socket);
   return 0;
 }
 
@@ -29,7 +27,7 @@ int main(int argc, char *argv[]) {
   std::string error;
 
   if (!parse_inference_server_args(argc, argv, args, show_help, error)) {
-    std::cerr << error << '\n';
+    spdlog::error(error);
     print_inference_server_usage(argv[0]);
     return 2;
   }
@@ -39,5 +37,10 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  return run_server(args);
+  try {
+    return run_server(args);
+  } catch (const std::exception& e) {
+    spdlog::error("Server terminated due to error: {}", e.what());
+    return 1;
+  }
 }

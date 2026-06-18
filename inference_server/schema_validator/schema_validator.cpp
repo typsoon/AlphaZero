@@ -2,7 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
-#include <iostream>
+#include <spdlog/spdlog.h>
 #include <nlohmann/json-schema.hpp>
 #include <nlohmann/json.hpp>
 #include <utility>
@@ -12,7 +12,7 @@ SchemaValidator::SchemaValidator(std::filesystem::path schema_path)
 
 std::shared_ptr<SchemaValidator>
 get_schema_validator(std::filesystem::path schema_path) {
-  std::cout << schema_path << "\n";
+  spdlog::info("{}", schema_path.string());
   return std::shared_ptr<SchemaValidator>(new SchemaValidator(schema_path));
 }
 

@@ -48,6 +48,7 @@ target_link_libraries(inference_server PRIVATE Crow::Crow
       game
       inference
       mcts
+      spdlog::spdlog
       "${TORCH_LIBRARIES}"
  )
 
