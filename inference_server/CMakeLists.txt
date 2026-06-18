@@ -7,11 +7,10 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include(FetchContent)
-
 find_package(Torch REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
+find_package(asio CONFIG REQUIRED)
 find_package(Crow CONFIG REQUIRED)
 
 if(NOT TARGET CUDA::nvToolsExt)
