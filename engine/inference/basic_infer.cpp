@@ -64,11 +64,19 @@ typedef torch::jit::script::Module Network;
 std::shared_ptr<Network> get_network_func(std::string network_file_path,
                                           torch::Device device) {
   if (std::filesystem::exists(network_file_path)) {
-    return std::make_shared<Network>(
-        torch::jit::load(network_file_path, device));
+    try {
+      return std::make_shared<Network>(
+          torch::jit::load(network_file_path, device));
+    } catch (const c10::Error& e) {
+      spdlog::error("Failed to load network from {}. Ensure it is exported using TorchScript.", network_file_path);
+      throw std::runtime_error("Network file is not in TorchScript format");
+    } catch (const std::exception& e) {
+      spdlog::error("Failed to load network: {}", e.what());
+      throw std::runtime_error("Failed to load network");
+    }
   } else {
     spdlog::error("File {} doesn't exist", network_file_path);
-    throw std::exception();
+    throw std::runtime_error("Network file not found");
   }
 }
 
