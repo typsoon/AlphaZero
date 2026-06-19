@@ -46,7 +46,7 @@ jobs:
     - name: Format Checks (C++ & Python)
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang-format
+        sudo apt-get install -y clang-format fd-find
         doit check_cpp_format
         doit check_python_format
 
