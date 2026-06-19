@@ -3,7 +3,7 @@ name: CI
 on: [push, pull_request]
 
 env:
-  LIBTORCH_VERSION: "2.2.2"
+  LIBTORCH_VERSION: "2.7.1"
 
 jobs:
   build-and-test:
