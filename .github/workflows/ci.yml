@@ -1,0 +1,52 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  LIBTORCH_VERSION: "2.2.2"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Download and Extract LibTorch
+      run: |
+        wget -q https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${{ env.LIBTORCH_VERSION }}%2Bcpu.zip -O libtorch.zip
+        unzip -q libtorch.zip
+        echo "LIBTORCH_PATH=$PWD/libtorch" >> $GITHUB_ENV
+
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_PREFIX_PATH=${{ env.LIBTORCH_PATH }}
+
+    - name: Build C++ components
+      run: |
+        cd build
+        make -j$(nproc)
+
+    - name: Format Checks (C++ & Python)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang-format
+        doit check_cpp_format
+        doit check_python_format
+
+    - name: Python Lint Check
+      run: |
+        doit check_python_lint

@@ -3,7 +3,8 @@
 .vscode
 __pycache__
 build/
-.*
+.agents
 *.pt
 *.npz
 **/node_modules
+.doit.db
