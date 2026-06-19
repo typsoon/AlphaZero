@@ -1,6 +1,4 @@
 from torch.optim import Adam
-from inference_service.inference_service import InfererFactoryImpl
-from inference_service.inferer import InfererFactory
 from network import AlphaZeroNetwork
 from train import AlphaZeroTrainer
 from typing import Type
@@ -8,8 +6,7 @@ from typing import Type
 import torch
 from torch import nn
 
-from pybind import self_play_bind, engine_bind  # pyright: ignore
-from engine_bind import Connect4, Game, ReplayBuffer  # pyright: ignore
+from engine_bind import Game, ReplayBuffer  # pyright: ignore
 
 
 def get_network(game: Type[Game], resblock_filter_size=64, residual_block_count=10):

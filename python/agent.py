@@ -74,7 +74,7 @@ class AlphaZeroAgent(Agent):
                 self.sock.close()
             except Exception:
                 pass
-        
+
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             self.sock.connect(self.socket_path)
@@ -129,34 +129,34 @@ class AlphaZeroAgent(Agent):
             if not chunk:
                 raise RuntimeError("Connection closed while reading headers")
             response += chunk
-        
+
         # Parse headers to get Content-Length
         response_str = response.decode("utf-8")
         headers_end = response_str.find("\r\n\r\n")
         headers = response_str[:headers_end]
-        
+
         content_length = None
         for line in headers.split("\r\n"):
             if line.lower().startswith("content-length:"):
                 content_length = int(line.split(":", 1)[1].strip())
                 break
-        
+
         if content_length is None:
             raise RuntimeError("Missing Content-Length header in inference response")
-        
+
         # Read response body based on Content-Length
-        body_bytes = response[headers_end + 4:]
+        body_bytes = response[headers_end + 4 :]
         max_response_size = 1024 * 1024  # 1 MB limit
-        
+
         if content_length > max_response_size:
             raise RuntimeError(f"Response too large: {content_length} bytes (max 1 MB)")
-        
+
         while len(body_bytes) < content_length:
             chunk = self.sock.recv(4096)
             if not chunk:
                 raise RuntimeError("Connection closed while reading body")
             body_bytes += chunk
-        
+
         body = body_bytes[:content_length].decode("utf-8")
 
         # Safe deserialization with depth and type validation

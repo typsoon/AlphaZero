@@ -27,8 +27,8 @@ struct AlphaZeroNetworkImpl : torch::nn::Module {
     torch::nn::BatchNorm2d value_bn{nullptr};
     torch::nn::Linear value_fc1{nullptr}, value_fc2{nullptr};
 
-    AlphaZeroNetworkImpl(int input_channels, int h, int w, int num_res_blocks,
-                         int action_size, int num_filters);
+    AlphaZeroNetworkImpl(int input_channels, int h, int w, int num_res_blocks, int action_size,
+                         int num_filters);
 
     std::pair<torch::Tensor, torch::Tensor> forward(torch::Tensor x);
 };

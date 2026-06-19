@@ -8,7 +8,6 @@ namespace py = pybind11;
 
 PYBIND11_MODULE(self_play_bind, m) {
 
-    m.def("self_play", &self_play, py::arg("game"), py::arg("network_path"),
-          py::arg("replay_buf"), py::arg("num_games") = 100,
-          py::arg("thread_count") = 1);
+    m.def("self_play", &self_play, py::arg("game"), py::arg("network_path"), py::arg("replay_buf"),
+          py::arg("num_games") = 100, py::arg("thread_count") = 1);
 }

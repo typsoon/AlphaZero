@@ -12,8 +12,7 @@ struct Transition {
     torch::Tensor policy;
     float reward;
 
-    Transition(const torch::Tensor &s = {}, const torch::Tensor &p = {},
-               float r = 0);
+    Transition(const torch::Tensor &s = {}, const torch::Tensor &p = {}, float r = 0);
 };
 
 class ReplayBuffer {
@@ -28,8 +27,7 @@ class ReplayBuffer {
 
     void add(const std::vector<Transition> &transitions);
 
-    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
-    sample(size_t batch_size) const;
+    std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> sample(size_t batch_size) const;
 };
 
 #endif // REPLAY_BUFFER_HPP

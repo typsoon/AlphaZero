@@ -15,39 +15,40 @@ Connect4::Connect4(torch::Device device) : device(device) {
     reset();
 }
 
-Connect4::Connect4(const std::vector<std::vector<int>>& initial_board, 
-                   torch::Device device) 
+Connect4::Connect4(const std::vector<std::vector<int>> &initial_board, torch::Device device)
     : device(device) {
     // Validate board dimensions
     if (initial_board.size() != ROWS) {
         throw std::invalid_argument("Board must have " + std::to_string(ROWS) + " rows");
     }
-    for (const auto& row : initial_board) {
+    for (const auto &row : initial_board) {
         if (row.size() != COLS) {
             throw std::invalid_argument("Board must have " + std::to_string(COLS) + " columns");
         }
     }
-    
+
     // Copy the board
     board = initial_board;
-    
+
     // Determine current player by counting pieces
     int player1_count = 0;
     int player2_count = 0;
-    for (const auto& row : board) {
+    for (const auto &row : board) {
         for (int cell : row) {
-            if (cell == 1) player1_count++;
-            else if (cell == -1) player2_count++;
+            if (cell == 1)
+                player1_count++;
+            else if (cell == -1)
+                player2_count++;
         }
     }
-    
+
     // Player 1 goes first, so if counts are equal, it's player 1's turn
     currentPlayer = (player1_count == player2_count) ? 1 : -1;
-    
+
     // Check if game is already finished
     finished = false;
     _reward = 0.0f;
-    
+
     // Check for wins
     for (int row = 0; row < ROWS; row++) {
         for (int col = 0; col < COLS; col++) {
@@ -58,7 +59,7 @@ Connect4::Connect4(const std::vector<std::vector<int>>& initial_board,
             }
         }
     }
-    
+
     // Check for draw
     bool boardFull = true;
     for (int col = 0; col < COLS; col++) {
@@ -96,8 +97,7 @@ vector<int> Connect4::get_legal_actions() const {
 
 void Connect4::step(int action) {
     if (finished || action < 0 || action >= COLS || board[0][action] != 0) {
-        throw std::invalid_argument("Invalid action " +
-                                    std::to_string(finished) + " " +
+        throw std::invalid_argument("Invalid action " + std::to_string(finished) + " " +
                                     std::to_string(action));
     }
 
@@ -176,8 +176,7 @@ void Connect4::render() const {
         }
         std::cout << std::endl;
     }
-    std::cout << "Current Player: " << (currentPlayer == 1 ? "X" : "O")
-              << std::endl;
+    std::cout << "Current Player: " << (currentPlayer == 1 ? "X" : "O") << std::endl;
 }
 
 bool Connect4::checkWin(int row, int col) const {
@@ -192,8 +191,7 @@ bool Connect4::checkDirection(int row, int col, int dRow, int dCol) const {
     for (int i = -3; i <= 3; i++) {
         int r = row + i * dRow;
         int c = col + i * dCol;
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS &&
-            board[r][c] == currentPlayer) {
+        if (r >= 0 && r < ROWS && c >= 0 && c < COLS && board[r][c] == currentPlayer) {
             count++;
             if (count == 4)
                 return true;

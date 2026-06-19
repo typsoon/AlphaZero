@@ -38,6 +38,5 @@ ReplayBuffer::sample(size_t batch_size) const {
         rewards.push_back(transition.reward);
     }
 
-    return {torch::stack(states), torch::stack(policies),
-            torch::tensor(rewards, torch::kFloat32)};
+    return {torch::stack(states), torch::stack(policies), torch::tensor(rewards, torch::kFloat32)};
 }

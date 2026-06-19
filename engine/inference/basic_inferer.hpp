@@ -30,8 +30,7 @@ class NetworkInferer : public Inferer {
   public:
     NetworkInferer(std::shared_ptr<Network> method, torch::Device device);
 
-    vector<inference_result>
-    infer(vector<GameState> game_state_tensor) override;
+    vector<inference_result> infer(vector<GameState> game_state_tensor) override;
     // Optional: expose device if needed
     // torch::Device device() const;
 };
@@ -49,8 +48,7 @@ class NetworkInfererFactory : public InfererFactory {
     std::mutex get_inferer_mutex;
 
   public:
-    NetworkInfererFactory(const std::string &network_file_path,
-                          torch::Device device);
+    NetworkInfererFactory(const std::string &network_file_path, torch::Device device);
 
     std::unique_ptr<Inferer> get_inferer() override;
 };

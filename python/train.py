@@ -10,7 +10,6 @@ import sys
 from tqdm import tqdm as base_tqdm
 from tqdm.notebook import tqdm as notebook_tqdm
 
-from pybind import self_play_bind, engine_bind
 from self_play_bind import self_play  # pyright: ignore
 from engine_bind import Game, ReplayBuffer  # pyright: ignore
 

@@ -12,8 +12,7 @@ int main() {
     }
 
     // Set device
-    torch::Device device(torch::cuda::is_available() ? torch::kCUDA
-                                                     : torch::kCPU);
+    torch::Device device(torch::cuda::is_available() ? torch::kCUDA : torch::kCPU);
 
     // Create a tensor and move it to the selected device
     torch::Tensor tensor = torch::rand({3, 3}).to(device);

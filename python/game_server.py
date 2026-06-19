@@ -5,7 +5,6 @@ import argparse
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from pybind import engine_bind  # pyright: ignore
 from engine_bind import Connect4  # pyright: ignore
 
 from agent import AlphaZeroAgent
@@ -71,7 +70,9 @@ class GameHandler(BaseHTTPRequestHandler):
 
             except Exception as e:
                 # TODO: fix it so stack overflow attacks are not possible
-                logger.info("An error occured after receiving a request to reset the game ", e)
+                logger.info(
+                    "An error occured after receiving a request to reset the game ", e
+                )
                 self._send_error(f"Failed to reset game: {e}")
 
         else:

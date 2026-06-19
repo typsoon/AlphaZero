@@ -1,5 +1,4 @@
-import engine.self_play_bind  # pyright: ignore
-from pybind.engine_bind import Connect4, Game  # pyright: ignore
+from pybind.engine_bind import Game  # pyright: ignore
 import numpy as np
 
 
@@ -22,7 +21,7 @@ def play_game(game: Game, mcts_policy_fn, human_plays_as=1) -> list[tuple]:
         Game result
     """
     training_examples = []
-    state = game.reset()
+    game.reset()
     player = 1  # +1 or -1, depending on who's to move
 
     while not game.is_terminal():

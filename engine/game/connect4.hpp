@@ -18,7 +18,7 @@ class Connect4 : public Game {
     static constexpr auto state_dim = std::make_tuple(1, 6, 7);
 
     Connect4(torch::Device device = torch::Device("cpu"));
-    Connect4(const std::vector<std::vector<int>>& initial_board, 
+    Connect4(const std::vector<std::vector<int>> &initial_board,
              torch::Device device = torch::Device("cpu"));
     ~Connect4() override = default;
 

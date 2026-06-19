@@ -14,8 +14,8 @@ class MCTSFactory {
     float alpha;
 
   public:
-    MCTSFactory(InfererFactory &inferer_factory, float c_init = 1.25,
-                float c_base = 19652, float eps = 0.25, float alpha = 0.3);
+    MCTSFactory(InfererFactory &inferer_factory, float c_init = 1.25, float c_base = 19652,
+                float eps = 0.25, float alpha = 0.3);
 
     std::unique_ptr<MCTS> get_mcts();
 };

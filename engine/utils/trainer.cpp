@@ -5,12 +5,11 @@
 #include <iostream>
 #include <torch/torch.h>
 
-AlphaZeroTrainer::AlphaZeroTrainer(AlphaZeroNetwork &network,
-                                   ReplayBuffer &replay_buffer,
-                                   torch::optim::Optimizer &optimizer,
-                                   torch::Device device, size_t minibatch_size)
-    : network(network), replay_buffer(replay_buffer), optimizer(optimizer),
-      device(device), minibatch_size(minibatch_size) {}
+AlphaZeroTrainer::AlphaZeroTrainer(AlphaZeroNetwork &network, ReplayBuffer &replay_buffer,
+                                   torch::optim::Optimizer &optimizer, torch::Device device,
+                                   size_t minibatch_size)
+    : network(network), replay_buffer(replay_buffer), optimizer(optimizer), device(device),
+      minibatch_size(minibatch_size) {}
 
 void AlphaZeroTrainer::train(size_t train_steps, size_t batch_size) {
     network->train();
@@ -49,8 +48,7 @@ void AlphaZeroTrainer::train(size_t train_steps, size_t batch_size) {
         optimizer.step();
 
 #ifndef NDEBUG
-        std::cout << "Step: " << step
-                  << ", Policy Loss: " << policy_loss.item<float>()
+        std::cout << "Step: " << step << ", Policy Loss: " << policy_loss.item<float>()
                   << ", Value Loss: " << value_loss.item<float>() << std::endl;
 #endif
     }

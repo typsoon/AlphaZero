@@ -1,12 +1,7 @@
-from typing import Tuple, Type
+from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pathlib import Path
-
-
-from pybind import engine_bind  # pyright: ignore
-from engine_bind import Game
 
 
 class ResidualBlock(nn.Module):

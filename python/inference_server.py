@@ -1,6 +1,5 @@
 """HTTP inference server using Unix socket for AlphaZero gameplay."""
 
-import sys
 import json
 import argparse
 import logging
@@ -12,12 +11,10 @@ import os
 import signal
 import threading
 
-from pybind import engine_bind
 from engine_bind import MCTS, Connect4  # pyright: ignore
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -50,7 +47,7 @@ class InferenceHandler(BaseHTTPRequestHandler):
                     raise ValueError("Missing game_state in request")
 
                 logger.info(f"Received game state: {game_state}")
-                
+
                 # Create a Game object with the board state and device
                 game = Connect4(game_state, self.device)
 

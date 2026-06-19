@@ -96,23 +96,23 @@ class GameClient:
         response_str = response.decode("utf-8")
         headers_end = response_str.find("\r\n\r\n")
         headers = response_str[:headers_end]
-        
+
         logger.info(f"Response headers:\n{headers}")
-        
+
         content_length = None
         for line in headers.split("\r\n"):
             if line.lower().startswith("content-length:"):
                 content_length = int(line.split(":", 1)[1].strip())
                 break
-        
+
         if content_length is None:
             logger.error("No Content-Length header found in response")
             raise RuntimeError("Missing Content-Length header")
-        
+
         logger.info(f"Content-Length: {content_length}")
-        
+
         # Read the body based on Content-Length
-        body_bytes = response[headers_end + 4:]
+        body_bytes = response[headers_end + 4 :]
         try:
             while len(body_bytes) < content_length:
                 chunk = self.sock.recv(4096)
@@ -121,10 +121,10 @@ class GameClient:
                 body_bytes += chunk
         except socket.timeout:
             raise RuntimeError("Timeout while reading response body")
-        
+
         body = body_bytes[:content_length].decode("utf-8")
         logger.info(f"Received response body: {body[:500]}")
-        
+
         try:
             parsed_response = json.loads(body)
             logger.info(f"Parsed response: {parsed_response}")
@@ -192,7 +192,7 @@ class Connect4GUI:
         self.board = None
         self.is_terminal = False
         self.waiting_for_server = False
-        
+
         self.colors = {
             "red": red_color,
             "yellow": yellow_color,
@@ -201,7 +201,7 @@ class Connect4GUI:
             "outline": "#dddddd",
             "text": "black",
             "error": "red",
-            "draw": "gray"
+            "draw": "gray",
         }
 
         canvas_height = ROWS * CELL_SIZE + 60
@@ -211,12 +211,12 @@ class Connect4GUI:
             height=canvas_height,
             bg=self.colors["bg"],
             highlightthickness=0,
-            bd=0
+            bd=0,
         )
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self._on_click)
         self.root.title("Connect 4 vs AlphaZero")
-        
+
         self.status_text_id = None
         self._draw_status("Loading game state...", self.colors["text"])
 
@@ -233,7 +233,7 @@ class Connect4GUI:
             ROWS * CELL_SIZE + 30,
             text=message,
             font=("Helvetica", 14, "bold"),
-            fill=color
+            fill=color,
         )
 
     def _on_click(self, event):
@@ -243,7 +243,7 @@ class Connect4GUI:
             logger.info("Game over - resetting game")
             self._reset_game()
             return
-        
+
         if self.waiting_for_server:
             return
 
@@ -298,8 +298,7 @@ class Connect4GUI:
                 self.root.after(200, self._refresh_and_draw)
             else:
                 self._draw_status(
-                    f"Reset failed: {response.get('message')}",
-                    self.colors["error"]
+                    f"Reset failed: {response.get('message')}", self.colors["error"]
                 )
         except Exception as e:
             logger.error(f"Reset error: {e}", exc_info=True)
@@ -322,8 +321,7 @@ class Connect4GUI:
                 self._draw_board()
             else:
                 self._draw_status(
-                    f"Error: {response.get('message')}",
-                    self.colors["error"]
+                    f"Error: {response.get('message')}", self.colors["error"]
                 )
         except Exception as e:
             logger.error(f"Connection error: {e}", exc_info=True)
@@ -349,26 +347,34 @@ class Connect4GUI:
                 y1 = y0 + CELL_SIZE
 
                 self.canvas.create_rectangle(
-                    x0, y0, x1, y1,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
                     fill=self.colors["board"],
                     outline=self.colors["bg"],
                     width=2,
-                    tags="board"
+                    tags="board",
                 )
 
                 cell = self.board[r][c]
                 token_color = (
-                    self.colors["bg"] if cell == 0 else
-                    self.colors["red"] if cell == 1 else
-                    self.colors["yellow"]
+                    self.colors["bg"]
+                    if cell == 0
+                    else self.colors["red"]
+                    if cell == 1
+                    else self.colors["yellow"]
                 )
 
                 self.canvas.create_oval(
-                    x0 + 10, y0 + 10, x1 - 10, y1 - 10,
+                    x0 + 10,
+                    y0 + 10,
+                    x1 - 10,
+                    y1 - 10,
                     fill=token_color,
                     outline=self.colors["outline"],
                     width=1,
-                    tags="board"
+                    tags="board",
                 )
 
         # Column numbers (0-based for clarity)
@@ -376,11 +382,7 @@ class Connect4GUI:
             x = c * CELL_SIZE + CELL_SIZE // 2
             y = ROWS * CELL_SIZE + 10
             self.canvas.create_text(
-                x, y,
-                text=str(c),
-                font=("Helvetica", 12),
-                fill="#666",
-                tags="board"
+                x, y, text=str(c), font=("Helvetica", 12), fill="#666", tags="board"
             )
 
 
@@ -408,7 +410,7 @@ def main():
         sys.exit(1)
 
     root = tk.Tk()
-    gui = Connect4GUI(root, client)
+    _gui = Connect4GUI(root, client)
 
     try:
         root.mainloop()

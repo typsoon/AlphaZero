@@ -16,8 +16,7 @@ using std::string;
 
 static torch::Tensor vector_to_tensor(std::vector<float> &data) {
     // Optionally specify size if reshaping is needed
-    return torch::from_blob(data.data(), {static_cast<long>(data.size())},
-                            torch::kFloat);
+    return torch::from_blob(data.data(), {static_cast<long>(data.size())}, torch::kFloat);
 }
 
 static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
@@ -28,7 +27,7 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
     while (!game->is_terminal()) {
         auto canonical_state = game->get_canonical_state();
         torch::Tensor game_state_tensor = std::move(canonical_state);
-        game_state_tensor = game_state_tensor.unsqueeze(0);  
+        game_state_tensor = game_state_tensor.unsqueeze(0);
         auto policy = mcts->search(*game);
 
         // Pick action based on policy probability distribution
@@ -36,8 +35,7 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
         static std::mt19937 rng(std::random_device{}());
         int action = dist(rng);
 
-        trajectory.emplace_back(game_state_tensor,
-                                vector_to_tensor(policy).clone(), 0);
+        trajectory.emplace_back(game_state_tensor, vector_to_tensor(policy).clone(), 0);
         game->step(action);
     }
 
@@ -51,8 +49,8 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
     replay_buffer.add(trajectory);
 }
 
-void self_play(std::shared_ptr<Game> initial_game, string network_path,
-               ReplayBuffer &replay_buffer, int num_games, int thread_count) {
+void self_play(std::shared_ptr<Game> initial_game, string network_path, ReplayBuffer &replay_buffer,
+               int num_games, int thread_count) {
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
@@ -75,8 +73,7 @@ void self_play(std::shared_ptr<Game> initial_game, string network_path,
             play_game(game->clone(), std::move(mcts), replay_buffer);
             {
                 std::lock_guard<std::mutex> lock(cout_mutex);
-                std::cout << "Games played: " << games_finished++ << "/" << num_games
-                          << "\n";
+                std::cout << "Games played: " << games_finished++ << "/" << num_games << "\n";
             }
         }
     };

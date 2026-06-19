@@ -1,20 +1,21 @@
 import tkinter as tk
 import threading
 import sys
-import numpy as np
 import torch
-from typing import Optional
+from pathlib import Path
+from agent import Agent
 
 proj_root = Path(__file__).parent
 build_dir = proj_root / "build"
 
 sys.path.append(str(build_dir / "engine"))
 
-from engine_bind import Game, Connect4  # pyright: ignore
+from engine_bind import Game, Connect4  # pyright: ignore # noqa: E402
 
 CELL_SIZE = 80
 ROWS = 6
 COLS = 7
+
 
 class Connect4GUI:
     def __init__(
@@ -40,7 +41,7 @@ class Connect4GUI:
             "outline": "#dddddd",
             "text": "black",
             "error": "red",
-            "draw": "gray"
+            "draw": "gray",
         }
 
         canvas_height = ROWS * CELL_SIZE + 60
@@ -50,7 +51,7 @@ class Connect4GUI:
             height=canvas_height,
             bg=self.colors["bg"],
             highlightthickness=0,
-            bd=0
+            bd=0,
         )
         self.canvas.pack()
         self.root.title("Connect 4")
@@ -67,26 +68,34 @@ class Connect4GUI:
                 x1, y1 = x0 + CELL_SIZE, y0 + CELL_SIZE
 
                 self.canvas.create_rectangle(
-                    x0, y0, x1, y1,
+                    x0,
+                    y0,
+                    x1,
+                    y1,
                     fill=self.colors["board"],
                     outline=self.colors["bg"],
                     width=2,
-                    tags="board"
+                    tags="board",
                 )
 
                 cell_value = self.game.get_board_state()[row][col]
                 token_color = (
-                    self.colors["bg"] if cell_value == 0 else
-                    self.colors["red"] if cell_value == 1 else
-                    self.colors["yellow"]
+                    self.colors["bg"]
+                    if cell_value == 0
+                    else self.colors["red"]
+                    if cell_value == 1
+                    else self.colors["yellow"]
                 )
 
                 self.canvas.create_oval(
-                    x0 + 10, y0 + 10, x1 - 10, y1 - 10,
+                    x0 + 10,
+                    y0 + 10,
+                    x1 - 10,
+                    y1 - 10,
                     fill=token_color,
                     outline=self.colors["outline"],
                     width=1,
-                    tags="board"
+                    tags="board",
                 )
 
         # ✅ Add column numbers (1-based)
@@ -94,13 +103,13 @@ class Connect4GUI:
             x = col * CELL_SIZE + CELL_SIZE // 2
             y = ROWS * CELL_SIZE + 10
             self.canvas.create_text(
-                x, y,
+                x,
+                y,
                 text=str(col + 1),
                 font=("Helvetica", 12),
                 fill="#666",
-                tags="board"
+                tags="board",
             )
-
 
     def draw_status(self, message: str, color: str = None):
         if color is None:
@@ -112,11 +121,10 @@ class Connect4GUI:
             ROWS * CELL_SIZE + 30,
             text=message,
             font=("Helvetica", 14, "bold"),
-            fill=color
+            fill=color,
         )
 
     def update_turn_display(self):
-        player_color = self.colors["red"] if self.game.current_player == 1 else self.colors["yellow"]
         player_name = "Red" if self.game.current_player == 1 else "Yellow"
         self.draw_status(f"{player_name}'s Turn", "Black")
 
@@ -125,7 +133,9 @@ class Connect4GUI:
             self.handle_game_end()
             return
 
-        current_agent = self.red_agent if self.game.current_player == 1 else self.yellow_agent
+        current_agent = (
+            self.red_agent if self.game.current_player == 1 else self.yellow_agent
+        )
         threading.Thread(target=self.execute_move, args=(current_agent,)).start()
 
     def handle_game_end(self):
@@ -143,7 +153,7 @@ class Connect4GUI:
             self.game.step(action)
             self.draw_board()
             if not self.game.is_terminal:
-                self.update_turn_display() 
+                self.update_turn_display()
                 self.root.after(300, self.play_turn)
             else:
                 self.root.after(300, self.handle_game_end)

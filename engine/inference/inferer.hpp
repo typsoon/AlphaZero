@@ -8,8 +8,7 @@ typedef std::pair<torch::Tensor, float> inference_result;
 struct Inferer {
     // Inferer should have a method to predict the policy and value for a given
     // game state
-    virtual std::vector<inference_result>
-    infer(std::vector<GameState> gameState) = 0;
+    virtual std::vector<inference_result> infer(std::vector<GameState> gameState) = 0;
     torch::Device device;
     virtual ~Inferer() = default;
 

@@ -20,9 +20,7 @@ class GameState {
     //     return state_tensor;
     // };
 
-    operator Tensor() && {
-        return std::move(state_tensor);
-    }
+    operator Tensor() && { return std::move(state_tensor); }
     // operator Tensor() {
     //     return state_tensor;
     // };

@@ -1,2 +1,2 @@
-from .inferer import Inferer
-from .inference_service import InfererFactoryImpl
+from .inferer import Inferer as Inferer
+from .inference_service import InfererFactoryImpl as InfererFactoryImpl

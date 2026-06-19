@@ -12,14 +12,17 @@ def parse_args():
         default="/tmp/alphazero.sock",
         help="Path to inference server Unix socket",
     )
+    parser.add_argument(
+        "--user-first",
+        action="store_true",
+        help="If set, user plays first (red)",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
-    parsed_args = parse_args()
-    alpha_zero_agent = AlphaZeroAgent(socket_path=parsed_args.socket)
-
-    az_agent = AlphaZeroAgent(args.network_path, torch.device(args.device))
+    args = parse_args()
+    az_agent = AlphaZeroAgent(socket_path=args.socket)
     user_agent = UserAgent()
 
     if args.user_first:
