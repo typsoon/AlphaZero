@@ -53,9 +53,9 @@ describe('Game Routes Integration', () => {
     expect(response.statusCode).toBe(400)
   })
 
-  test('GET /game/reset resets the game successfully', async () => {
+  test('POST /game/reset resets the game successfully', async () => {
     const response = await app.inject({
-      method: 'GET',
+      method: 'POST',
       url: '/game/reset'
     })
 
