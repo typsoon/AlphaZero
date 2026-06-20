@@ -18,7 +18,7 @@ function expectBoardSchema(state: BoardState): void {
     expect(Array.isArray(row)).toBe(true)
     expect(row).toHaveLength(7)
     for (const cell of row) {
-      expect([0, 1, 2]).toContain(cell)
+      expect([0, 1, -1]).toContain(cell)
     }
   }
 }
@@ -36,15 +36,15 @@ describe('Connect4', () => {
     expect(state.board.every((row) => row.every((cell) => cell === 0))).toBe(true)
   })
 
-  test('drops pieces from bottom and serializes second player as 2', () => {
+  test('drops pieces from bottom and serializes second player as -1', () => {
     const game = new Connect4()
 
     game.step(3) // player 1
-    game.step(3) // player -1 (serialized as 2)
+    game.step(3) // player -1
 
     const state = game.get_board_state() as BoardState
     expect(state.board[5]?.[3]).toBe(1)
-    expect(state.board[4]?.[3]).toBe(2)
+    expect(state.board[4]?.[3]).toBe(-1)
     expect(game.get_current_player()).toBe(1)
   })
 
@@ -76,14 +76,14 @@ describe('Connect4', () => {
     expect(game.reward()).toBe(1.0)
   })
 
-  test('accepts initial board and preserves JSON enum format', () => {
+  test('accepts initial board and preserves internal format', () => {
     const initial = [
       [0, 0, 0, 0, 0, 0, 0],
       [0, 0, 0, 0, 0, 0, 0],
       [0, 0, 0, 0, 0, 0, 0],
       [0, 0, 0, 0, 0, 0, 0],
-      [0, 0, 2, 0, 0, 0, 0],
-      [0, 1, 2, 0, 0, 0, 0],
+      [0, 0, -1, 0, 0, 0, 0],
+      [0, 1, -1, 0, 0, 0, 0],
     ]
     const game = new Connect4(initial)
 
