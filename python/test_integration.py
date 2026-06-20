@@ -91,16 +91,12 @@ def test_inference_server_api(inference_server):
 @pytest.fixture(scope="module")
 def game_server(inference_server):
     env = os.environ.copy()
-    env["PYTHONPATH"] = "python:build/training:build/engine:build"
+    env["SOCKET_PATH"] = SOCKET_PATH
+    env["PORT"] = str(PORT)
+
     p = subprocess.Popen(
-        [
-            "python",
-            "python/game_server.py",
-            "--socket",
-            SOCKET_PATH,
-            "--port",
-            str(PORT),
-        ],
+        ["npm", "run", "start"],
+        cwd="gameplay_server",
         env=env,
     )
 

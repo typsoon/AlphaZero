@@ -95,6 +95,17 @@ jobs:
       run: |
         doit check_python_lint
 
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 'lts/*'
+        cache: 'npm'
+        cache-dependency-path: 'gameplay_server/package-lock.json'
+
+    - name: TypeScript Tests
+      run: |
+        doit test_ts
+
     - name: C++ Tests
       run: |
         doit test_cpp
