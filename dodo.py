@@ -10,7 +10,7 @@ def with_report(cmd):
 
 def get_clang_format_cmd(args):
     """Returns the correct clang-format command using fd (if available) or falling back to find."""
-    excludes = ["build", "pybind11", "node_modules", "_deps", "libtorch", ".git"]
+    excludes = ["build", "pybind11", "node_modules", "_deps", "libtorch", ".git", "vcpkg"]
     
     fd_bin = shutil.which("fd") or shutil.which("fdfind")
     if fd_bin:
