@@ -31,10 +31,15 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
         game_state_tensor = game_state_tensor.unsqueeze(0);
         auto policy = mcts->search(*game);
 
-        // Pick action based on policy probability distribution
-        std::discrete_distribution<int> dist(policy.begin(), policy.end());
-        static std::mt19937 rng(std::random_device{}());
-        int action = dist(rng);
+        // Temperature scaling: tau=1 for first 30 moves, tau->0 (argmax) afterwards
+        int action = -1;
+        if (trajectory.size() < 30) {
+            std::discrete_distribution<int> dist(policy.begin(), policy.end());
+            static thread_local std::mt19937 rng(std::random_device{}());
+            action = dist(rng);
+        } else {
+            action = std::distance(policy.begin(), std::max_element(policy.begin(), policy.end()));
+        }
 
         trajectory.emplace_back(game_state_tensor, vector_to_tensor(policy).clone(), 0);
         game->step(action);
@@ -42,8 +47,8 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
 
     float value = game->reward();
 
-    for (size_t i = 0; i < trajectory.size(); ++i) {
-        (trajectory[i]).reward = value;
+    for (int i = static_cast<int>(trajectory.size()) - 1; i >= 0; --i) {
+        trajectory[i].reward = value;
         value = -value;
     }
 
@@ -55,7 +60,7 @@ void self_play(std::shared_ptr<Game> initial_game, string network_path, ReplayBu
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
-    auto game = std::make_unique<Connect4>(device);
+    auto game = initial_game->clone();
 
     auto inferer_factory = NetworkInfererFactory(network_path, device);
     MCTSFactory mcts_factory(inferer_factory);

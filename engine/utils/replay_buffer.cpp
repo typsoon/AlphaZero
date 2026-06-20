@@ -9,7 +9,7 @@ ReplayBuffer::ReplayBuffer(size_t capacity)
     : capacity(capacity), buffer(capacity), rng(std::random_device{}()) {}
 
 void ReplayBuffer::add(const std::vector<Transition> &transitions) {
-    std::lock_guard<std::mutex> lock(write_mutex);
+    std::unique_lock<std::shared_mutex> lock(rw_mutex);
     for (const auto &transition : transitions) {
         buffer[ptr] = transition;
         ptr = (ptr + 1) % capacity;
@@ -19,8 +19,14 @@ void ReplayBuffer::add(const std::vector<Transition> &transitions) {
     }
 }
 
+size_t ReplayBuffer::get_size() const {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    return size;
+}
+
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
 ReplayBuffer::sample(size_t batch_size) const {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
     batch_size = std::min(batch_size, size);
 
     std::vector<torch::Tensor> states, policies;

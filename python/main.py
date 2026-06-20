@@ -14,7 +14,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # thread_count = 4
 # games_in_each_iteration = 500
 training_iterations = 2000
-minibatch_size = 4096
 replay_buffer_size = 1500 * 35
 
 
@@ -47,6 +46,9 @@ def get_args():
     parser.add_argument(
         "--batch-size", type=int, default=256, help="Training batch size"
     )
+    parser.add_argument(
+        "--minibatch-size", type=int, default=4096, help="Training minibatch size"
+    )
 
     parser.add_argument(
         "--thread-count", type=int, default=os.cpu_count(), help="Thread count"
@@ -72,7 +74,7 @@ if __name__ == "__main__":
         games_in_each_iteration=args.games_in_each_iteration,
         replay_buffer_size=replay_buffer_size,
         training_iterations=training_iterations,
-        minibatch_size=minibatch_size,
+        minibatch_size=args.minibatch_size,
         batch_size=args.batch_size,
         thread_count=args.thread_count,
     )

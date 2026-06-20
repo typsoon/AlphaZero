@@ -24,7 +24,8 @@ PYBIND11_MODULE(engine_bind, m) {
         py::class_<ReplayBuffer>(m, "ReplayBuffer")
             .def(py::init<size_t>())
             .def("add", &ReplayBuffer::add)
-            .def("sample", &ReplayBuffer::sample);
+            .def("sample", &ReplayBuffer::sample)
+            .def("get_size", &ReplayBuffer::get_size);
 
         py::class_<Game, std::shared_ptr<Game>>(m, "Game")
             .def("get_board_state", &Game::get_board_state)

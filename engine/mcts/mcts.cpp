@@ -64,9 +64,9 @@ float MCTS::Node::Q() const {
 float MCTS::Node::UCB(float exploration_weight) const {
     if (!parent)
         return 0.0f;
-    return Q() + exploration_weight * prior *
-                     std::sqrt(parent->visits + parent->virtual_loss_count) /
-                     (1 + visits + virtual_loss_count);
+    return -Q() + exploration_weight * prior *
+                      std::sqrt(parent->visits + parent->virtual_loss_count + 1) /
+                      (1 + visits + virtual_loss_count);
 }
 
 void MCTS::Node::expand(const std::vector<float> &policy) {
@@ -132,13 +132,15 @@ void MCTS::evaluate_batch(std::vector<Node *> &leaves) {
 
     for (size_t i = 0; i < leaves.size(); ++i) {
         Node *node = leaves[i];
+        const auto &[policy_tensor, value] = outputs[i];
+
         if (node->is_expanded()) {
+            Node::backpropagate(node, value, true);
             continue;
         }
 
-        const auto &[policy_tensor, value] = outputs[i];
         auto policy =
-            get_policy_from_logits(policy_tensor, node->game_state->get_legal_actions(), true);
+            get_policy_from_logits(policy_tensor, node->game_state->get_legal_actions(), false);
 
         node->expand(policy);
         Node::backpropagate(node, value, true);
@@ -202,40 +204,31 @@ std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,
     policy_logits = policy_logits.squeeze(0); // [A]
     int A = policy_logits.size(0);
 
+    std::vector<float> mask_vec(A, -std::numeric_limits<float>::infinity());
+    for (int a : legal_actions) {
+        mask_vec[a] = 0.0f;
+    }
+    torch::Tensor mask = torch::tensor(mask_vec, policy_logits.options());
+    policy_logits = policy_logits + mask;
+
     torch::Tensor policy = torch::softmax(policy_logits, 0); // [A]
 
     if (dirichletNoise) {
-        std::vector<float> alpha_vec(legal_actions.size(),
-                                     alpha); // alpha to hiperparametr klasy
+        std::vector<float> alpha_vec(legal_actions.size(), alpha);
         auto noise_vec = sample_dirichlet(alpha_vec);
 
         std::vector<float> full_noise(A, 0.0f);
-        for (size_t i = 0; i < legal_actions.size(); ++i)
+        for (size_t i = 0; i < legal_actions.size(); ++i) {
             full_noise[legal_actions[i]] = noise_vec[i];
+        }
 
         auto noise_t = torch::tensor(full_noise, policy.options());
         policy = (1.0f - eps) * policy + eps * noise_t;
     }
 
-    std::vector<float> mask_vec(A, 0.0f);
-    for (int a : legal_actions)
-        mask_vec[a] = 1.0f;
-
-    torch::Tensor mask = torch::tensor(mask_vec, policy.options());
-    policy = policy * mask;
-
-    float sum = policy.sum().item<float>();
+    policy = policy.cpu();
     std::vector<float> policy_vec(A, 0.0f);
-
-    if (sum > 0.0f) {
-        policy = policy / sum;
-        policy = policy.cpu();
-        std::memcpy(policy_vec.data(), policy.data_ptr<float>(), A * sizeof(float));
-    } else {
-        float inv = 1.0f / static_cast<float>(legal_actions.size());
-        for (int a : legal_actions)
-            policy_vec[a] = inv;
-    }
+    std::memcpy(policy_vec.data(), policy.data_ptr<float>(), A * sizeof(float));
 
     return policy_vec;
 }

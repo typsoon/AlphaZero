@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from typing import Any, Callable, Type
+from torch.utils.data import TensorDataset, DataLoader
 
 
 from network import AlphaZeroNetwork
@@ -57,70 +58,45 @@ class AlphaZeroTrainer:
             states, target_policies, target_values = self.replay_buffer.sample(
                 self.minibatch_size
             )
-            states = states.to(self.device)
-            target_policies = target_policies.to(self.device)
-            target_values = target_values.to(self.device)
+
+            minibatch = TensorDataset(
+                states.to(self.device),
+                target_policies.to(self.device),
+                target_values.to(self.device),
+            )
+            dataloader = DataLoader(minibatch, batch_size=batch_size)
 
             # print(states.shape, target_policies.shape, target_values.shape)
             # print(states, target_policies, target_values)
             # print(target_policies, target_values)
             if states.shape[0] < self.minibatch_size:
-                raise Warning(
-                    f"This shouldn't happen, {states.shape[0]}, {self.minibatch_size}"
-                )  # albo raise Warning
-
-            for i in range(accum_steps):
-                start = i * batch_size
-                end = start + batch_size
-
-                s_batch = states[start:end]
-
-                assert s_batch.shape[0] != 0, (
-                    f"s_batch shouldn't be empty, {start} {end}"
+                # Not enough data yet — skip training this step.
+                print(
+                    f"Not enough data to train yet ({states.shape[0]} < {self.minibatch_size}). Skipping training step."
                 )
+                return
 
-                pi_batch = target_policies[start:end]
-                v_batch = target_values[start:end]
-
-                s_batch = states[start:end]
-                pi_batch = target_policies[start:end]
-                v_batch = target_values[start:end]
+            debug_counter = 0
+            for s_batch, pi_batch, v_batch in dataloader:
+                assert s_batch.shape[0] != 0, (
+                    f"s_batch shouldn't be empty, {debug_counter}"
+                )
 
                 p_logits, v_preds = self.model(s_batch)
                 v_preds = v_preds.squeeze()
 
                 logp = F.log_softmax(p_logits, dim=1)
-                pi_batch = pi_batch + 1e-8
-                pi_batch = pi_batch / pi_batch.sum(dim=1, keepdim=True)
 
-                # print("p_logits:", p_logits.min().item(), p_logits.max().item())
-                # print("pi_batch sum:", pi_batch.sum(dim=1))
-                # print("pi_batch any negative:", (pi_batch < 0).any().item())
-                # print("pi_batch any zero:", (pi_batch == 0).any().item())
-                assert v_preds.shape[0] != 0, f"{p_logits} {s_batch}"
-                # print(
-                #     v_preds,
-                #     v_batch,
-                #     "MSE LOSS: ",
-                #     F.mse_loss(v_preds.squeeze(), v_batch),
-                #     f"{value_loss.item():.4f}",
-                # )
-                # sleep(1)
-
-                # print("logp any inf:", torch.isinf(logp).any().item())
-                # print("logp any NaN:", torch.isnan(logp).any().item())
-
-                policy_loss = F.kl_div(logp, pi_batch, reduction="batchmean")
-                value_loss = F.mse_loss(v_preds, v_batch)
-
-                assert v_preds.shape == v_batch.shape, (
-                    f"{v_preds.shape} {v_batch.shape}"
-                )
+                # Cross-entropy: -sum(pi * log_softmax(p)), matching AlphaZero paper.
+                # Only average over entries where pi > 0 to avoid distorting targets.
+                policy_loss = -(pi_batch * logp).sum(dim=1).mean()
                 value_loss = F.mse_loss(v_preds, v_batch)
 
                 loss = policy_loss + value_loss
                 loss /= accum_steps
                 loss.backward()
+
+                debug_counter += 1
 
             self.optimizer.step()
             self.optimizer.zero_grad()
