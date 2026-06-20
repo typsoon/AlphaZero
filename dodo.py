@@ -70,10 +70,6 @@ def task_format_cpp():
     """Format C++ code using clang-format."""
     return {"actions": [get_clang_format_cmd("-i")]}
 
-def task_test_cpp():
-    """Run C++ tests."""
-    return {"actions": [with_report("build/inference_server/tests/inference_server_tests")]}
-
 def task_build():
     """Build the C++ components locally, optionally using ccache if available."""
     cmake_cmd = (
@@ -89,7 +85,7 @@ def task_build():
         
     return {
         "actions": [
-            cmake_cmd,
+            f"test -f build/CMakeCache.txt || {cmake_cmd}",
             "cmake --build build -j$(nproc)"
         ]
     }
@@ -97,6 +93,14 @@ def task_build():
 def task_test_python():
     """Run Python integration tests."""
     return {"actions": [with_report("pytest python/test_integration.py")]}
+
+def task_test_cpp():
+    """Run C++ tests."""
+    return {
+        "actions": [with_report("build/inference_server/tests/inference_server_tests")],
+        "task_dep": ["build"]
+    }
+
 
 def task_check_all():
     """Run all CI checks."""
@@ -107,11 +111,14 @@ def task_check_all():
 
 def task_setup_service():
     """Install the inference server as a systemd user service."""
+    import os
+    repo_dir = os.getcwd()
+    home_dir = os.path.expanduser("~")
     return {
         "actions": [
-            "mkdir -p ~/.config/systemd/user ~/.config/alphazero",
-            "cp inference_server/alphazero-inference.service ~/.config/systemd/user/",
-            "test -f ~/.config/alphazero/inference.env || cp inference_server/inference.env.example ~/.config/alphazero/inference.env",
+            f"mkdir -p {home_dir}/.config/systemd/user {home_dir}/.config/alphazero/models",
+            f"sed 's|{{REPO_DIR}}|{repo_dir}|g' inference_server/alphazero-inference.service > {home_dir}/.config/systemd/user/alphazero-inference.service",
+            f"test -f {home_dir}/.config/alphazero/inference.env || sed -e 's|{{REPO_DIR}}|{repo_dir}|g' -e 's|{{HOME_DIR}}|{home_dir}|g' inference_server/inference.env.example > {home_dir}/.config/alphazero/inference.env",
             "systemctl --user daemon-reload",
         ]
     }
