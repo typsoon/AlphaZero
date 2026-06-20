@@ -51,7 +51,7 @@ jobs:
         path: |
           vcpkg
           ~/.cache/vcpkg
-        key: vcpkg-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+        key: vcpkg-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', '.github/workflows/ci.yml') }}
 
     - name: Setup vcpkg and install C++ dependencies
       if: steps.cache-vcpkg.outputs.cache-hit != 'true'
