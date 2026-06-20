@@ -116,6 +116,8 @@ def task_build():
     cmake_cmd = (
         "cmake -S . -B build "
         "-DCMAKE_PREFIX_PATH=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)') "
+        "-DPython3_EXECUTABLE=$(which python) "
+        "-DPYTHON_EXECUTABLE=$(which python) "
         "-DBUILD_TESTS=ON "
         "-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake"
     )
@@ -129,7 +131,8 @@ def task_build():
     return {
         "actions": [
             f"test -f build/CMakeCache.txt || {cmake_cmd}",
-            "cmake --build build -j$(nproc)"
+            "cmake --build build -j$(nproc)",
+            "test -f build/compile_commands.json && ln -sf build/compile_commands.json . || true"
         ],
         "task_dep": ["setup_vcpkg"]
     }
