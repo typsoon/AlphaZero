@@ -10,8 +10,8 @@
 #include <c10/core/DeviceType.h>
 #include <memory>
 #include <random>
-#include <vector>
 #include <spdlog/spdlog.h>
+#include <vector>
 
 using std::string;
 

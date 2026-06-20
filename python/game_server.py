@@ -14,7 +14,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _to_cpp_inference_game_state(board_state: list[list[int]]) -> dict[str, list[list[int]]]:
+def _to_cpp_inference_game_state(
+    board_state: list[list[int]],
+) -> dict[str, list[list[int]]]:
     """Convert engine board encoding (0, 1, -1) to schema encoding (0, 1, 2)."""
     converted_board: list[list[int]] = []
     for row in board_state:

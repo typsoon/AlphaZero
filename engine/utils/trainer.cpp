@@ -48,9 +48,7 @@ void AlphaZeroTrainer::train(size_t train_steps, size_t batch_size) {
         optimizer.step();
 
 #ifndef NDEBUG
-        spdlog::info("Step: {}, Policy Loss: {}, Value Loss: {}",
-                     step,
-                     policy_loss.item<float>(),
+        spdlog::info("Step: {}, Policy Loss: {}, Value Loss: {}", step, policy_loss.item<float>(),
                      value_loss.item<float>());
 #endif
     }

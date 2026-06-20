@@ -1,9 +1,9 @@
-#include "../schema_validator/schema_validator.hpp"
 #include "../model_wrapper/model_wrapper.hpp"
+#include "../schema_validator/schema_validator.hpp"
 
-#include <nlohmann/json.hpp>
 #include <exception>
 #include <filesystem>
+#include <nlohmann/json.hpp>
 #include <string>
 
 #include <CppUTest/CommandLineTestRunner.h>
@@ -17,8 +17,7 @@ TEST_GROUP(SchemaValidatorTestGroup) {
         validator = get_schema_validator(schema_path);
     }
 
-    void teardown() {
-    }
+    void teardown() {}
 };
 
 TEST(SchemaValidatorTestGroup, ValidPayloadIsAccepted) {
@@ -49,12 +48,12 @@ TEST_GROUP(ModelWrapperTestGroup) {
     std::shared_ptr<ModelWrapper> wrapper;
 
     void setup() {
-        std::string model_path = std::string(ALPHAZERO_REPO_ROOT) + "/inference_server/tests/payloads/dummy_model.pt";
+        std::string model_path =
+            std::string(ALPHAZERO_REPO_ROOT) + "/inference_server/tests/payloads/dummy_model.pt";
         wrapper = create_connect4_model_wrapper(model_path, "cpu");
     }
 
-    void teardown() {
-    }
+    void teardown() {}
 };
 
 TEST(ModelWrapperTestGroup, ValidInferenceReturnsJSON) {
@@ -70,7 +69,7 @@ TEST(ModelWrapperTestGroup, ValidInferenceReturnsJSON) {
     })";
 
     std::string result = wrapper->predict(payload);
-    
+
     auto result_json = nlohmann::json::parse(result);
     CHECK_TRUE(result_json.contains("policy"));
     CHECK_EQUAL(7, result_json["policy"].size());
@@ -90,7 +89,7 @@ TEST(ModelWrapperTestGroup, InvalidModelPathThrows) {
 #include <CppUTest/MemoryLeakWarningPlugin.h>
 #include <CppUTest/TestRegistry.h>
 
-int main(int ac, char** av) {
+int main(int ac, char **av) {
     MemoryLeakWarningPlugin::turnOffNewDeleteOverloads();
     TestRegistry::getCurrentRegistry()->removePluginByName("MemoryLeakWarningPlugin");
     return CommandLineTestRunner::RunAllTests(ac, av);
