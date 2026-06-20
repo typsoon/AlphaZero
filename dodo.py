@@ -21,6 +21,31 @@ def get_clang_format_cmd(args):
         find_cmd = f"find . -type d \\( {excludes_find} \\) -prune -o -type f \\( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \\) -print"
         return f"{find_cmd} | xargs -r clang-format {args}"
 
+def get_cmake_files_cmd(cmd, args):
+    """Returns the correct command for cmake files using fd (if available) or falling back to find."""
+    excludes = ["build", "pybind11", "node_modules", "_deps", "libtorch", ".git", "vcpkg"]
+    
+    fd_bin = shutil.which("fd") or shutil.which("fdfind")
+    if fd_bin:
+        excludes_str = " ".join([f"-E {e}" for e in excludes])
+        return f"{fd_bin} 'CMakeLists\\.txt|\\.cmake$' -t f {excludes_str} -X {cmd} {args}"
+    else:
+        excludes_find = " -o ".join([f"-name {e}" for e in excludes])
+        find_cmd = f"find . -type d \\( {excludes_find} \\) -prune -o -type f \\( -name 'CMakeLists.txt' -o -name '*.cmake' \\) -print"
+        return f"{find_cmd} | xargs -r {cmd} {args}"
+
+def task_check_cmake_format():
+    """Check CMake formatting using cmake-format."""
+    return {"actions": [with_report(get_cmake_files_cmd("cmake-format", "--check"))]}
+
+def task_check_cmake_lint():
+    """Lint CMake code using cmake-lint."""
+    return {"actions": [with_report(get_cmake_files_cmd("cmake-lint", ""))]}
+
+def task_format_cmake():
+    """Format CMake code using cmake-format."""
+    return {"actions": [get_cmake_files_cmd("cmake-format", "-i")]}
+
 def task_check_python_format():
     """Check Python formatting using Ruff."""
     return {"actions": [with_report("ruff format --check python gameplay")]}
@@ -57,7 +82,7 @@ def task_check_all():
     """Run all CI checks."""
     return {
         "actions": [],
-        "task_dep": ["check_python_format", "check_python_lint", "check_cpp_format", "test_cpp", "test_python"],
+        "task_dep": ["check_python_format", "check_python_lint", "check_cpp_format", "check_cmake_format", "check_cmake_lint", "test_cpp", "test_python"],
     }
 
 def task_setup_service():

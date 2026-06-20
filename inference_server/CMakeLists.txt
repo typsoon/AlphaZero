@@ -34,33 +34,28 @@ if(NOT TARGET mcts)
 endif()
 
 # Link it to your executable
-add_executable(inference_server
-    inference_server.cpp
-    args_parser/inference_server_args.cpp
-    server/server.cpp
-    model_wrapper/model_wrapper.cpp
-    schema_validator/schema_validator.cpp
-)
-target_link_libraries(inference_server PRIVATE Crow::Crow
-     nlohmann_json::nlohmann_json
-      nlohmann_json_schema_validator::validator
-      game
-      inference
-      mcts
-      spdlog::spdlog
-      "${TORCH_LIBRARIES}"
- )
+add_executable(
+  inference_server
+  inference_server.cpp args_parser/inference_server_args.cpp server/server.cpp
+  model_wrapper/model_wrapper.cpp schema_validator/schema_validator.cpp)
+target_link_libraries(
+  inference_server
+  PRIVATE Crow::Crow
+          nlohmann_json::nlohmann_json
+          nlohmann_json_schema_validator::validator
+          game
+          inference
+          mcts
+          spdlog::spdlog
+          "${TORCH_LIBRARIES}")
 
-target_include_directories(inference_server PRIVATE
-    ${TORCH_INCLUDE_DIRS}
-)
+target_include_directories(inference_server PRIVATE ${TORCH_INCLUDE_DIRS})
 
-target_compile_definitions(inference_server PRIVATE
-    ALPHAZERO_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/.."
-)
+target_compile_definitions(
+  inference_server PRIVATE ALPHAZERO_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 option(BUILD_TESTS "Build tests" ON)
 if(BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
+  enable_testing()
+  add_subdirectory(tests)
 endif()
