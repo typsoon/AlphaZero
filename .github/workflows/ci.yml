@@ -20,6 +20,7 @@ jobs:
       uses: actions/setup-python@v6
       with:
         python-version: '3.12'
+        cache: 'pip'
 
     - name: Install Python dependencies
       run: |
@@ -27,17 +28,38 @@ jobs:
         pip install -r requirements.txt
         pip install pytest requests doit
 
+    - name: Cache LibTorch
+      id: cache-libtorch
+      uses: actions/cache@v4
+      with:
+        path: libtorch
+        key: libtorch-${{ env.LIBTORCH_VERSION }}-cxx11-abi
+
     - name: Download and Extract LibTorch
+      if: steps.cache-libtorch.outputs.cache-hit != 'true'
       run: |
         wget -q https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${{ env.LIBTORCH_VERSION }}%2Bcpu.zip -O libtorch.zip
         unzip -q libtorch.zip
-        echo "LIBTORCH_PATH=$PWD/libtorch" >> $GITHUB_ENV
+        rm libtorch.zip
+        
+    - name: Set LibTorch Path
+      run: echo "LIBTORCH_PATH=$PWD/libtorch" >> $GITHUB_ENV
+
+    - name: Cache vcpkg
+      id: cache-vcpkg
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg
+          ~/.cache/vcpkg
+        key: vcpkg-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
     - name: Setup vcpkg and install C++ dependencies
+      if: steps.cache-vcpkg.outputs.cache-hit != 'true'
       run: |
         git clone https://github.com/Microsoft/vcpkg.git
         ./vcpkg/bootstrap-vcpkg.sh
-        ./vcpkg/vcpkg install spdlog nlohmann-json nlohmann-json-schema-validator asio crow cpputest
+        ./vcpkg/vcpkg install spdlog nlohmann-json json-schema-validator asio crow cpputest
 
     - name: Configure CMake
       run: |
