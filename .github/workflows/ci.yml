@@ -60,11 +60,24 @@ jobs:
         ./vcpkg/bootstrap-vcpkg.sh
         ./vcpkg/vcpkg install spdlog nlohmann-json json-schema-validator asio crow cpputest
 
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ccache fd-find
+
+    - name: Cache ccache
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/ccache
+        key: ccache-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ runner.os }}-
+
     - name: Configure CMake
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_PREFIX_PATH=${{ env.LIBTORCH_PATH }} -DBUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake
+        cmake .. -DCMAKE_PREFIX_PATH=${{ env.LIBTORCH_PATH }} -DBUILD_TESTS=ON -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache
 
     - name: Build C++ components
       run: |
@@ -73,8 +86,6 @@ jobs:
 
     - name: Format Checks (C++ & Python)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y fd-find
         doit check_cpp_format
         doit check_cmake_format
         doit check_cmake_lint
