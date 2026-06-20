@@ -74,6 +74,26 @@ def task_test_cpp():
     """Run C++ tests."""
     return {"actions": [with_report("build/inference_server/tests/inference_server_tests")]}
 
+def task_build():
+    """Build the C++ components locally, optionally using ccache if available."""
+    cmake_cmd = (
+        "cmake -S . -B build "
+        "-DCMAKE_PREFIX_PATH=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)') "
+        "-DBUILD_TESTS=ON "
+        "-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake"
+    )
+    
+    # Automatically use ccache to speed up compilation if the user has it installed
+    if shutil.which("ccache"):
+        cmake_cmd += " -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
+        
+    return {
+        "actions": [
+            cmake_cmd,
+            "cmake --build build -j$(nproc)"
+        ]
+    }
+
 def task_test_python():
     """Run Python integration tests."""
     return {"actions": [with_report("pytest python/test_integration.py")]}
