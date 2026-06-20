@@ -70,10 +70,6 @@ def task_format_cpp():
     """Format C++ code using clang-format."""
     return {"actions": [get_clang_format_cmd("-i")]}
 
-def task_test_cpp():
-    """Run C++ tests."""
-    return {"actions": [with_report("build/inference_server/tests/inference_server_tests")]}
-
 def task_build():
     """Build the C++ components locally, optionally using ccache if available."""
     cmake_cmd = (
@@ -89,7 +85,7 @@ def task_build():
         
     return {
         "actions": [
-            cmake_cmd,
+            f"test -f build/CMakeCache.txt || {cmake_cmd}",
             "cmake --build build -j$(nproc)"
         ]
     }
@@ -97,6 +93,14 @@ def task_build():
 def task_test_python():
     """Run Python integration tests."""
     return {"actions": [with_report("pytest python/test_integration.py")]}
+
+def task_test_cpp():
+    """Run C++ tests."""
+    return {
+        "actions": [with_report("build/inference_server/tests/inference_server_tests")],
+        "task_dep": ["build"]
+    }
+
 
 def task_check_all():
     """Run all CI checks."""
