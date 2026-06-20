@@ -6,7 +6,7 @@ from typing import Type
 import torch
 from torch import nn
 
-from engine_bind import Game, ReplayBuffer  # pyright: ignore
+from pybind.engine_bind import Game, ReplayBuffer  # pyright: ignore
 
 
 def get_network(game: Type[Game], resblock_filter_size=64, residual_block_count=10):

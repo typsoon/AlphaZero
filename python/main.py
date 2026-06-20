@@ -8,7 +8,7 @@ from train import self_play_and_train_loop
 import argparse
 import os
 
-from engine_bind import Connect4  # pyright: ignore
+from pybind.engine_bind import Connect4  # pyright: ignore
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # thread_count = 4
