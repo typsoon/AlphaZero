@@ -1,0 +1,6 @@
+ruff==0.15.18
+doit==0.37.0
+pytest==9.1.1
+requests==2.32.3
+cmakelang==0.6.13
+clang-format==22.1.5
