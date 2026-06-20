@@ -1,5 +1,5 @@
 import shutil
-
+from doit_systemd import *
 DOIT_CONFIG = {
     "verbosity": 2,
 }
@@ -100,6 +100,16 @@ def task_format_cpp():
     """Format C++ code using clang-format."""
     return {"actions": [get_clang_format_cmd("-i")]}
 
+def task_setup_vcpkg():
+    """Clone and bootstrap vcpkg locally, then install C++ dependencies."""
+    return {
+        "actions": [
+            "test -d vcpkg || git clone https://github.com/microsoft/vcpkg.git",
+            "test -f vcpkg/vcpkg || ./vcpkg/bootstrap-vcpkg.sh",
+            "./vcpkg/vcpkg install spdlog nlohmann-json json-schema-validator asio crow cpputest"
+        ]
+    }
+
 
 def task_build():
     """Build the C++ components locally, optionally using ccache if available."""
@@ -119,8 +129,9 @@ def task_build():
     return {
         "actions": [
             f"test -f build/CMakeCache.txt || {cmake_cmd}",
-            "cmake --build build -j$(nproc)",
-        ]
+            "cmake --build build -j$(nproc)"
+        ],
+        "task_dep": ["setup_vcpkg"]
     }
 
 
@@ -158,46 +169,4 @@ def task_check_all():
             "test_python",
             "test_ts",
         ],
-    }
-
-
-def task_setup_service():
-    """Install the inference server as a systemd user service."""
-    import os
-    repo_dir = os.getcwd()
-    home_dir = os.path.expanduser("~")
-    return {
-        "actions": [
-            f"mkdir -p {home_dir}/.config/systemd/user {home_dir}/.config/alphazero/models",
-            f"sed 's|{{REPO_DIR}}|{repo_dir}|g' inference_server/alphazero-inference.service > {home_dir}/.config/systemd/user/alphazero-inference.service",
-            f"test -f {home_dir}/.config/alphazero/inference.env || sed -e 's|{{REPO_DIR}}|{repo_dir}|g' -e 's|{{HOME_DIR}}|{home_dir}|g' inference_server/inference.env.example > {home_dir}/.config/alphazero/inference.env",
-            "systemctl --user daemon-reload",
-        ]
-    }
-
-
-def task_enable_service():
-    """Enable the inference server systemd service to start on boot."""
-    return {
-        "actions": [
-            "systemctl --user enable alphazero-inference.service",
-        ]
-    }
-
-
-def task_disable_service():
-    """Disable the inference server systemd service."""
-    return {
-        "actions": [
-            "systemctl --user disable alphazero-inference.service",
-        ]
-    }
-
-
-def task_start_service():
-    """Start the inference server systemd service immediately."""
-    return {
-        "actions": [
-            "systemctl --user start alphazero-inference.service",
-        ]
     }
