@@ -60,3 +60,37 @@ def task_check_all():
         "task_dep": ["check_python_format", "check_python_lint", "check_cpp_format", "test_cpp", "test_python"],
     }
 
+def task_setup_service():
+    """Install the inference server as a systemd user service."""
+    return {
+        "actions": [
+            "mkdir -p ~/.config/systemd/user ~/.config/alphazero",
+            "cp inference_server/alphazero-inference.service ~/.config/systemd/user/",
+            "test -f ~/.config/alphazero/inference.env || cp inference_server/inference.env.example ~/.config/alphazero/inference.env",
+            "systemctl --user daemon-reload",
+        ]
+    }
+
+def task_enable_service():
+    """Enable the inference server systemd service to start on boot."""
+    return {
+        "actions": [
+            "systemctl --user enable alphazero-inference.service",
+        ]
+    }
+
+def task_disable_service():
+    """Disable the inference server systemd service."""
+    return {
+        "actions": [
+            "systemctl --user disable alphazero-inference.service",
+        ]
+    }
+
+def task_start_service():
+    """Start the inference server systemd service immediately."""
+    return {
+        "actions": [
+            "systemctl --user start alphazero-inference.service",
+        ]
+    }

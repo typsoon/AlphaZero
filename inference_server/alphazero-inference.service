@@ -1,0 +1,15 @@
+[Unit]
+Description=AlphaZero Inference Server
+After=network.target
+
+[Service]
+Type=simple
+# Load environment variables from this file
+EnvironmentFile=%h/.config/alphazero/inference.env
+# Execute the server with the variables
+ExecStart=/home/piotrek/Playground/AlphaZeroCurrentFeature/build/inference_server/inference_server --network-path ${NETWORK_PATH} --device ${DEVICE} --socket ${SOCKET_PATH}
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target
