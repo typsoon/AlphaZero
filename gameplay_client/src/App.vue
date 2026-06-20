@@ -111,7 +111,7 @@ async function resetGame(): Promise<void> {
   loading.value = true
   setStatus('Resetting game...', 'info')
   try {
-    const response = await fetch(`${apiBase}/game/reset`, { method: 'GET' })
+    const response = await fetch(`${apiBase}/game/reset`, { method: 'POST' })
     const data = (await response.json()) as { status: string; message?: string }
     if (data.status !== 'ok') throw new Error(data.message ?? 'Reset failed')
     await fetchStatus()

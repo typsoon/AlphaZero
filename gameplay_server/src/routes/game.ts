@@ -23,7 +23,7 @@ export default async function gameRoutes(server: FastifyInstance) {
     };
   });
 
-  server.get("/game/reset", async (req, reply) => {
+  server.post("/game/reset", async (req, reply) => {
     game.reset();
     return { status: "ok", message: "Game reset" };
   });

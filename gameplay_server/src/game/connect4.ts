@@ -130,13 +130,7 @@ class Connect4 implements Game {
   }
 
   get_board_state(): Connect4StateJson {
-    const serializedBoard = this.board.map((row) =>
-      row.map((cell) => {
-        if (cell === -1) return 2
-        return cell
-      }),
-    )
-
+    const serializedBoard = this.board.map((row) => [...row])
     return { board: serializedBoard }
   }
 
