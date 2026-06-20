@@ -9,3 +9,6 @@ build/
 **/node_modules
 .doit.db
 gameplay_client/logs/
+vcpkg/
+.pytest_cache/
+.ruff_cache/
