@@ -111,11 +111,14 @@ def task_check_all():
 
 def task_setup_service():
     """Install the inference server as a systemd user service."""
+    import os
+    repo_dir = os.getcwd()
+    home_dir = os.path.expanduser("~")
     return {
         "actions": [
-            "mkdir -p ~/.config/systemd/user ~/.config/alphazero",
-            "cp inference_server/alphazero-inference.service ~/.config/systemd/user/",
-            "test -f ~/.config/alphazero/inference.env || cp inference_server/inference.env.example ~/.config/alphazero/inference.env",
+            f"mkdir -p {home_dir}/.config/systemd/user {home_dir}/.config/alphazero/models",
+            f"sed 's|{{REPO_DIR}}|{repo_dir}|g' inference_server/alphazero-inference.service > {home_dir}/.config/systemd/user/alphazero-inference.service",
+            f"test -f {home_dir}/.config/alphazero/inference.env || sed -e 's|{{REPO_DIR}}|{repo_dir}|g' -e 's|{{HOME_DIR}}|{home_dir}|g' inference_server/inference.env.example > {home_dir}/.config/alphazero/inference.env",
             "systemctl --user daemon-reload",
         ]
     }
