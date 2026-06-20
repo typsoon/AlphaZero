@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 
 type GameStatusResponse = {
   status: 'ok' | 'error'
@@ -124,8 +124,28 @@ async function resetGame(): Promise<void> {
   }
 }
 
+function handleKeydown(e: KeyboardEvent) {
+  let col = -1
+  if (['1','2','3','4','5','6','7'].includes(e.key)) {
+    col = parseInt(e.key, 10) - 1
+  } else if (e.code?.startsWith('Digit') && e.code.length === 6) {
+    col = parseInt(e.code.charAt(5), 10) - 1
+  } else if (e.code?.startsWith('Numpad') && e.code.length === 7) {
+    col = parseInt(e.code.charAt(6), 10) - 1
+  }
+
+  if (col >= 0 && col <= 6) {
+    makeMove(col)
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', handleKeydown)
   await fetchStatus()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
 })
 </script>
 
@@ -144,6 +164,9 @@ onMounted(async () => {
       <div class="status" :class="statusKind">{{ statusText }}</div>
 
       <div class="board" role="grid" aria-label="Connect4 board">
+        <div v-for="i in 7" :key="`label-${i}`" class="col-label" @click="makeMove(i - 1)" style="cursor: pointer;" title="Drop piece in column">
+          {{ i }}
+        </div>
         <template v-for="(row, r) in board" :key="`r-${r}`">
           <button
             v-for="(_cell, c) in row"
@@ -153,7 +176,7 @@ onMounted(async () => {
               p1: board[r][c] === 1,
               p2: board[r][c] === -1
             }"
-            :disabled="!canPlay(c) || dropRowForColumn(c) !== r"
+            :disabled="!canPlay(c)"
             :title="`Column ${c}`"
             @click="makeMove(c)"
           />
