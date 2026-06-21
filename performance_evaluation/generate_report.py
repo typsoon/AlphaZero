@@ -174,6 +174,10 @@ HTML_TEMPLATE = """
                                     <span style="color: #94a3b8">Chosen Move:</span>
                                     <span style="font-weight: 600; color: ${test.passed ? 'var(--success)' : 'var(--danger)'}">${test.chosen_move}</span>
                                 </div>
+                                <div class="data-row">
+                                    <span style="color: #94a3b8">Network Value:</span>
+                                    <span style="font-weight: 600">${test.network_value !== undefined ? test.network_value.toFixed(4) : "N/A"}</span>
+                                </div>
                                 <div class="data-row" style="margin-top: 1rem;">
                                     <span style="color: #94a3b8">Player to Move:</span>
                                     <span style="font-weight: 600">${playerToMove}</span>

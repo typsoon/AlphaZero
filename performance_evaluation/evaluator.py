@@ -91,15 +91,22 @@ def main():
     print(f"Starting inference server: {' '.join(cmd)}")
     kwargs = {}
     if not args.verbose:
-        kwargs["stdout"] = subprocess.DEVNULL
-        kwargs["stderr"] = subprocess.DEVNULL
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
 
     server_process = subprocess.Popen(cmd, **kwargs)
 
     try:
         print(f"Waiting for inference server to start at {socket_path}...")
         if not wait_for_server(socket_path):
-            raise RuntimeError("Inference server failed to start or become healthy.")
+            stdout_data, stderr_data = server_process.communicate()
+            error_msg = "Inference server failed to start or become healthy.\n"
+            if not args.verbose:
+                if stdout_data:
+                    error_msg += f"Stdout:\n{stdout_data.decode('utf-8')}\n"
+                if stderr_data:
+                    error_msg += f"Stderr:\n{stderr_data.decode('utf-8')}\n"
+            raise RuntimeError(error_msg)
 
         print("Server is ready. Starting evaluation...")
 
@@ -125,6 +132,8 @@ def main():
             policy = response["policy"]
             chosen_move = max(range(len(policy)), key=lambda i: policy[i])
 
+            value = response.get("value", 0.0)
+
             passed = chosen_move in expected_moves
 
             results.append(
@@ -134,6 +143,7 @@ def main():
                     "board": board,
                     "expected_moves": expected_moves,
                     "network_policy": policy,
+                    "network_value": value,
                     "chosen_move": chosen_move,
                     "passed": passed,
                 }

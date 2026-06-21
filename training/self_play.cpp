@@ -29,7 +29,7 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
         auto canonical_state = game->get_canonical_state();
         torch::Tensor game_state_tensor = std::move(canonical_state);
         game_state_tensor = game_state_tensor.unsqueeze(0);
-        auto policy = mcts->search(*game);
+        auto [policy, root_value] = mcts->search(*game);
 
         // Temperature scaling: tau=1 for first 30 moves, tau->0 (argmax) afterwards
         int action = -1;

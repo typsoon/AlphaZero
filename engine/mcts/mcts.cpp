@@ -147,9 +147,11 @@ void MCTS::evaluate_batch(std::vector<Node *> &leaves) {
     }
 }
 
-std::vector<float> MCTS::search(const Game &game, int num_simulations, int batch_size) {
+std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simulations,
+                                                  int batch_size) {
     auto root = game.clone();
     auto inference_res = network->infer({root->get_canonical_state()});
+    float root_value = inference_res.front().second;
     auto p_init =
         get_policy_from_logits(inference_res.front().first, root->get_legal_actions(), true);
     Node root_node = Node(std::move(root));
@@ -195,7 +197,7 @@ std::vector<float> MCTS::search(const Game &game, int num_simulations, int batch
     if (sum > 0.0f)
         for (auto &x : pi)
             x /= sum;
-    return pi;
+    return {pi, root_value};
 }
 
 std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,

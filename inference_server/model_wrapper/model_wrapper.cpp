@@ -41,14 +41,14 @@ class Connect4ModelWrapper final : public ModelWrapper {
         Connect4 game(board, device);
 
         auto start = std::chrono::high_resolution_clock::now();
-        const auto policy = mcts.search(game);
+        const auto [policy, value] = mcts.search(game);
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         // TODO: Make this log better
         spdlog::info("Elapsed time: {} ms", duration.count());
 
-        return nlohmann::json{{"policy", policy}}.dump();
+        return nlohmann::json{{"policy", policy}, {"value", value}}.dump();
     }
 };
 
