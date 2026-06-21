@@ -14,3 +14,4 @@ vcpkg/
 .ruff_cache/
 .cache/
 checkpoints/
+compile_commands.json

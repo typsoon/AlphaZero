@@ -49,6 +49,11 @@ target_link_libraries(
           spdlog::spdlog
           "${TORCH_LIBRARIES}")
 
+find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_FOUND)
+  target_link_libraries(inference_server PRIVATE CUDA::cupti)
+endif()
+
 target_include_directories(inference_server PRIVATE ${TORCH_INCLUDE_DIRS})
 
 target_compile_definitions(

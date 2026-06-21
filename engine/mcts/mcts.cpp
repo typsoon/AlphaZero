@@ -56,7 +56,7 @@ MCTS::Node::Node(std::unique_ptr<Game> state, float prior_value, Node *parent_no
 
 float MCTS::Node::Q() const {
     // return visits > 0 ? value / visits : 0.0f;
-    float adj_value = value - virtual_loss_count * VL;
+    float adj_value = value + virtual_loss_count * VL;
     int adj_visits = visits + virtual_loss_count;
     return adj_visits > 0 ? adj_value / adj_visits : 0.0f;
 }
@@ -179,7 +179,7 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
             if (!node->is_terminal()) {
                 leaves.push_back(node);
             } else {
-                Node::backpropagate(node, node->game_state->reward(), true);
+                Node::backpropagate(node, -node->game_state->reward(), true);
             }
         }
 

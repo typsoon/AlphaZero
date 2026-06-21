@@ -160,6 +160,11 @@ def task_test_python():
     return {"actions": [with_report("pytest python/test/")]}
 
 
+def task_test_train_loss():
+    """Run the AlphaZero training loss convergence test."""
+    return {"actions": [with_report("pytest -s python/test/test_train_loss.py")]}
+
+
 def task_test_cpp():
     """Run C++ tests."""
     return {
@@ -189,6 +194,7 @@ def task_check_all():
             "validate_connect4_puzzles",
             "test_cpp",
             "test_python",
+            "test_train_loss",
             "test_ts",
         ],
     }

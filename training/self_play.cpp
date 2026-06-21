@@ -77,7 +77,7 @@ void self_play(std::shared_ptr<Game> initial_game, string network_path, ReplayBu
             auto mcts = mcts_factory.get_mcts();
             play_game(game->clone(), std::move(mcts), replay_buffer);
             {
-                spdlog::info("Games played: {}/{}", games_finished++, num_games);
+                spdlog::info("Games played: {}/{}", ++games_finished, num_games);
             }
         }
     };

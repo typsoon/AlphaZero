@@ -4,6 +4,7 @@
 #include <connect4.hpp>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <spdlog/spdlog.h>
 
@@ -46,15 +47,21 @@ vector<inference_result> NetworkInferer::infer(std::vector<GameState> game_state
         batched[i].copy_(game_states_tensors[i]);
     }
 
-    auto result = infer_method({batched});
-    auto outputs = result.toTuple()->elements();
-    torch::Tensor policy = outputs[0].toTensor();
-    torch::Tensor value = outputs[1].toTensor();
-
     std::vector<inference_result> out;
-    out.reserve(batch_size);
-    for (int64_t i = 0; i < batch_size; ++i) {
-        out.push_back({policy[i], value[i].item<float>()});
+    try {
+        torch::NoGradGuard no_grad;
+        auto result = infer_method({batched});
+        auto outputs = result.toTuple()->elements();
+        torch::Tensor policy = outputs[0].toTensor();
+        torch::Tensor value = outputs[1].toTensor();
+
+        out.reserve(batch_size);
+        for (int64_t i = 0; i < batch_size; ++i) {
+            out.push_back({policy[i], value[i].item<float>()});
+        }
+    } catch (const std::exception &e) {
+        spdlog::error("Exception caught in NetworkInferer::infer: {}", e.what());
+        throw;
     }
 
     return out;

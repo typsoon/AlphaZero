@@ -85,7 +85,7 @@ class AlphaZeroTrainer:
                 )
 
                 p_logits, v_preds = self.model(s_batch)
-                v_preds = v_preds.squeeze()
+                v_preds = v_preds.squeeze(-1)
 
                 logp = F.log_softmax(p_logits, dim=1)
 
