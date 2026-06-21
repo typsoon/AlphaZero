@@ -1,13 +1,13 @@
 import torch
 from pathlib import Path
-from pybind.engine_bind import Connect4  # pyright: ignore
-from checkpoint_manager import CheckpointManager
-from injectors import (
+from .pybind.engine_bind import Connect4  # pyright: ignore
+from .checkpoint_manager import CheckpointManager
+from .injectors import (
     get_network,
     get_trainer,
 )
-from network import AlphaZeroNetwork
-from train import self_play_and_train_loop
+from .network import AlphaZeroNetwork
+from .train import self_play_and_train_loop
 import argparse
 import os
 import logging

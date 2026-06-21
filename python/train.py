@@ -1,4 +1,4 @@
-from checkpoint_manager import CheckpointManager
+from .checkpoint_manager import CheckpointManager
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -6,15 +6,15 @@ from typing import Any, Callable, Type
 from torch.utils.data import TensorDataset, DataLoader
 
 
-from network import AlphaZeroNetwork
+from .network import AlphaZeroNetwork
 
 import sys
 from tqdm import tqdm as base_tqdm
 from tqdm.notebook import tqdm as notebook_tqdm
 
-from pybind.self_play_bind import self_play  # pyright: ignore
+from .pybind.self_play_bind import self_play  # pyright: ignore
 import logging
-from pybind.engine_bind import Game, ReplayBuffer  # pyright: ignore
+from .pybind.engine_bind import Game, ReplayBuffer  # pyright: ignore
 
 
 tqdm = notebook_tqdm if "ipykernel" in sys.modules else base_tqdm

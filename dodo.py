@@ -1,5 +1,6 @@
 import shutil
-from doit_systemd import *
+from doit_systemd import *  # noqa: F403
+
 DOIT_CONFIG = {
     "verbosity": 2,
 }
@@ -71,14 +72,29 @@ def task_format_cmake():
     return {"actions": [get_cmake_files_cmd("cmake-format", "-i")]}
 
 
+def get_ruff_cmd(cmd_prefix):
+    """Returns the correct ruff command with exclusions."""
+    excludes = [
+        "build",
+        "pybind11",
+        "node_modules",
+        "_deps",
+        "libtorch",
+        ".git",
+        "vcpkg",
+    ]
+    excludes_str = " ".join([f"--exclude {e}" for e in excludes])
+    return f"{cmd_prefix} . {excludes_str}"
+
+
 def task_check_python_format():
     """Check Python formatting using Ruff."""
-    return {"actions": [with_report("ruff format --check python gameplay")]}
+    return {"actions": [with_report(get_ruff_cmd("ruff format --check"))]}
 
 
 def task_check_python_lint():
     """Lint Python code using Ruff."""
-    return {"actions": [with_report("ruff check python gameplay")]}
+    return {"actions": [with_report(get_ruff_cmd("ruff check"))]}
 
 
 def task_check_cpp_format():
@@ -88,17 +104,18 @@ def task_check_cpp_format():
 
 def task_format_python():
     """Format Python code using Ruff."""
-    return {"actions": ["ruff format python gameplay"]}
+    return {"actions": [get_ruff_cmd("ruff format")]}
 
 
 def task_fix_python_lint():
-    """Fix Python linting errors using Ruff."""
-    return {"actions": ["ruff check --fix python gameplay"]}
+    """Fix Python lint errors using Ruff."""
+    return {"actions": [get_ruff_cmd("ruff check --fix")]}
 
 
 def task_format_cpp():
     """Format C++ code using clang-format."""
     return {"actions": [get_clang_format_cmd("-i")]}
+
 
 def task_setup_vcpkg():
     """Clone and bootstrap vcpkg locally, then install C++ dependencies."""
@@ -106,7 +123,7 @@ def task_setup_vcpkg():
         "actions": [
             "test -d vcpkg || git clone https://github.com/microsoft/vcpkg.git",
             "test -f vcpkg/vcpkg || ./vcpkg/bootstrap-vcpkg.sh",
-            "./vcpkg/vcpkg install spdlog nlohmann-json json-schema-validator asio crow cpputest"
+            "./vcpkg/vcpkg install spdlog nlohmann-json json-schema-validator asio crow cpputest",
         ]
     }
 
@@ -132,15 +149,15 @@ def task_build():
         "actions": [
             f"test -f build/CMakeCache.txt || {cmake_cmd}",
             "cmake --build build -j$(nproc)",
-            "test -f build/compile_commands.json && ln -sf build/compile_commands.json . || true"
+            "test -f build/compile_commands.json && ln -sf build/compile_commands.json . || true",
         ],
-        "task_dep": ["setup_vcpkg"]
+        "task_dep": ["setup_vcpkg"],
     }
 
 
 def task_test_python():
     """Run Python integration tests."""
-    return {"actions": [with_report("pytest python/test_integration.py")]}
+    return {"actions": [with_report("pytest python/test/")]}
 
 
 def task_test_cpp():
@@ -168,8 +185,44 @@ def task_check_all():
             "check_cpp_format",
             "check_cmake_format",
             "check_cmake_lint",
+            "check_format_connect4_puzzles",
+            "validate_connect4_puzzles",
             "test_cpp",
             "test_python",
             "test_ts",
         ],
+    }
+
+
+def task_validate_connect4_puzzles():
+    """Validate the Connect4 puzzle JSON files."""
+    return {
+        "actions": [with_report("python -m performance_evaluation.validate_puzzles")]
+    }
+
+
+def task_format_connect4_puzzles():
+    """Format the Connect4 puzzle JSON files."""
+    return {"actions": ["python -m performance_evaluation.format_puzzles"]}
+
+
+def task_check_format_connect4_puzzles():
+    """Check if the Connect4 puzzle JSON files are correctly formatted."""
+    return {
+        "actions": [
+            with_report("python -m performance_evaluation.check_format_puzzles")
+        ]
+    }
+
+
+def task_test_performance():
+    """Run performance evaluation and generate the HTML report."""
+    return {
+        "actions": [
+            with_report(
+                "python -m performance_evaluation.evaluator --network-path AZNetwork.pt_scripted --inference-binary build/inference_server/inference_server"
+            ),
+            with_report("python -m performance_evaluation.generate_report"),
+        ],
+        "task_dep": ["build"],
     }

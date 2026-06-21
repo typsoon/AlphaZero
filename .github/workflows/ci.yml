@@ -90,6 +90,7 @@ jobs:
         doit check_cmake_format
         doit check_cmake_lint
         doit check_python_format
+        doit check_format_connect4_puzzles
 
     - name: Python Lint Check
       run: |

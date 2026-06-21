@@ -12,5 +12,7 @@ sys.path.append(str(build_dir / "engine"))
 import engine_bind  # pyright: ignore # noqa: E402, F401
 import self_play_bind  # pyright: ignore # noqa: E402, F401
 
+sys.modules[__name__ + ".engine_bind"] = engine_bind
+sys.modules[__name__ + ".self_play_bind"] = self_play_bind
 sys.modules["pybind.engine_bind"] = engine_bind
 sys.modules["pybind.self_play_bind"] = self_play_bind

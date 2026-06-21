@@ -1,4 +1,4 @@
-from pybind.engine_bind import Game  # pyright: ignore
+from .pybind.engine_bind import Game  # pyright: ignore
 import numpy as np
 import logging
 

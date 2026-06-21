@@ -1,6 +1,6 @@
 import shutil
 from pathlib import Path
-from network import AlphaZeroNetwork
+from .network import AlphaZeroNetwork
 
 
 class CheckpointManager:
