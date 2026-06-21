@@ -1,3 +1,4 @@
+from checkpoint_manager import CheckpointManager
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -12,6 +13,7 @@ from tqdm import tqdm as base_tqdm
 from tqdm.notebook import tqdm as notebook_tqdm
 
 from pybind.self_play_bind import self_play  # pyright: ignore
+import logging
 from pybind.engine_bind import Game, ReplayBuffer  # pyright: ignore
 
 
@@ -71,7 +73,7 @@ class AlphaZeroTrainer:
             # print(target_policies, target_values)
             if states.shape[0] < self.minibatch_size:
                 # Not enough data yet — skip training this step.
-                print(
+                logging.info(
                     f"Not enough data to train yet ({states.shape[0]} < {self.minibatch_size}). Skipping training step."
                 )
                 return
@@ -112,34 +114,40 @@ class AlphaZeroTrainer:
 
 
 def self_play_and_train_loop(
+    # """
+    # Main orchestrator for the AlphaZero training pipeline.
+    #
+    # Args:
+    #     checkpoint_manager: Handles tracking, saving, and rotating network history. Must be initialized and populated before passing.
+    # """
+    checkpoint_manager: CheckpointManager,
     network_type: Type[AlphaZeroNetwork],
-    network_path: str,
     network_device: torch.device,
     game_type: Type[Game],
     trainer_factory: Callable[
         [nn.Module, torch.device, ReplayBuffer, int], AlphaZeroTrainer
     ],
-    loop_iterations: int = 1,
-    games_in_each_iteration: int = 100,
-    batch_size=256,
-    training_iterations=20,
-    thread_count: int = 1,
-    replay_buffer_size=1000,
-    minibatch_size=4096,
+    loop_iterations: int,
+    games_in_each_iteration: int,
+    batch_size: int,
+    training_iterations: int,
+    thread_count: int,
+    replay_buffer_size: int,
+    minibatch_size: int,
 ):
-    game = game_type()
+    # We MUST pass network_device here so the C++ clone() inherits the same device.
+    # Otherwise, it defaults to CPU, causing a CUDA/CPU mismatch during batched inference.
+    game = game_type(network_device)
     replay_buffer = ReplayBuffer(replay_buffer_size)
 
-    latest_network_path = network_path
-    network = network_type.load_az_network(latest_network_path, network_device)
+    network = network_type.load_az_network(
+        checkpoint_manager.get_latest_checkpoint_file(), network_device
+    )
 
     for _ in range(loop_iterations):
-        latest_scripted_network_path = latest_network_path + "_scripted.pt"
-        network.script_and_save_network(latest_scripted_network_path)
-
         self_play(
             game,
-            latest_scripted_network_path,
+            checkpoint_manager.get_latest_scripted_checkpoint_file(),
             replay_buffer,
             games_in_each_iteration,
             thread_count,
@@ -150,5 +158,4 @@ def self_play_and_train_loop(
         )
         trainer.train(batch_size, training_iterations)
 
-        latest_network_path = network_path + "_trained"
-        network.save_az_network(latest_network_path)
+        checkpoint_manager.add_checkpoint(network)

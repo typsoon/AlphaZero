@@ -1,5 +1,6 @@
 from pybind.engine_bind import Game  # pyright: ignore
 import numpy as np
+import logging
 
 
 def sample_action(action_probs, legal_actions):
@@ -30,14 +31,14 @@ def play_game(game: Game, mcts_policy_fn, human_plays_as=1) -> list[tuple]:
 
         if player == human_plays_as:
             game.render()
-            print(f"Legal actions: {legal_actions}")
+            logging.info(f"Legal actions: {legal_actions}")
             try:
                 action = int(input("Enter your action: "))
             except Exception:
                 action = -10000
 
             while action not in legal_actions:
-                print("Invalid action, try again.")
+                logging.warning("Invalid action, try again.")
                 try:
                     action = int(input("Enter your action: "))
                 except Exception:

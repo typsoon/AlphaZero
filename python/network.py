@@ -31,6 +31,7 @@ class AlphaZeroNetwork(nn.Module):
         num_filters: int,
     ):
         super().__init__()
+
         self._height = height
         self._width = width
 

@@ -1,5 +1,6 @@
 import json
 import socket
+import logging
 import threading
 import tkinter as tk
 from abc import ABC, abstractmethod
@@ -35,7 +36,7 @@ class UserAgent(Agent):
         self.selected_column = None
         self.move_ready.clear()
 
-        print("Waiting for move: ")
+        logging.info("Waiting for move: ")
         self.move_ready.wait()
 
         assert self.selected_column is not None
@@ -116,7 +117,9 @@ class AlphaZeroAgent(Agent):
         except (BrokenPipeError, ConnectionResetError, OSError) as e:
             if retry:
                 # Connection lost, try to reconnect once
-                print(f"Connection to inference server lost, reconnecting... ({e})")
+                logging.warning(
+                    f"Connection to inference server lost, reconnecting... ({e})"
+                )
                 self._reconnect()
                 return self._send_inference_request(game_state, retry=False)
             else:
@@ -224,5 +227,5 @@ class AlphaZeroAgent(Agent):
         """
         policy = self._send_inference_request(game_state)
         answer = int(argmax(np.array(policy)))
-        print(f"AI chose move: {answer}")
+        logging.info(f"AI chose move: {answer}")
         return answer

@@ -1,3 +1,5 @@
+# torch has to be imported before importing pybind libtorch modules otherwise a segfault will be thrown
+import torch  # noqa F401
 import sys
 from pathlib import Path
 
