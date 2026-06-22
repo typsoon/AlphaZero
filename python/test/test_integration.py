@@ -5,6 +5,7 @@ import socket
 import json
 import requests
 import os
+import signal
 from pathlib import Path
 from python.utils import BUILD_DIR
 
@@ -29,7 +30,8 @@ def inference_server():
             model_path,
             "--device",
             "cpu",
-        ]
+        ],
+        preexec_fn=os.setsid,
     )
 
     for _ in range(50):
@@ -38,11 +40,11 @@ def inference_server():
             break
         time.sleep(0.1)
     else:
-        p.kill()
+        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         raise RuntimeError("Inference server failed to start")
 
     yield
-    p.kill()
+    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
 
 
 def test_inference_server_api(inference_server):
@@ -100,6 +102,7 @@ def game_server(inference_server):
         ["npm", "run", "start"],
         cwd="gameplay_server",
         env=env,
+        preexec_fn=os.setsid,
     )
 
     for _ in range(50):
@@ -112,11 +115,11 @@ def game_server(inference_server):
         except requests.exceptions.ConnectionError:
             time.sleep(0.1)
     else:
-        p.kill()
+        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         raise RuntimeError("Game server failed to start")
 
     yield
-    p.kill()
+    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
 
 
 def test_game_server_e2e(game_server):
