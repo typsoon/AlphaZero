@@ -2,13 +2,10 @@ import tkinter as tk
 import threading
 import sys
 import torch
-from pathlib import Path
+from python.utils import BUILD_DIR
 from agent import Agent
 
-proj_root = Path(__file__).parent
-build_dir = proj_root / "build"
-
-sys.path.append(str(build_dir / "engine"))
+sys.path.append(str(BUILD_DIR / "engine"))
 
 from engine_bind import Game, Connect4  # pyright: ignore # noqa: E402
 

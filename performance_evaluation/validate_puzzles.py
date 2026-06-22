@@ -1,7 +1,6 @@
 import json
 import sys
-import glob
-import os
+from python.utils import PROJ_ROOT
 
 
 def get_legal_moves(board):
@@ -166,7 +165,7 @@ def process_puzzle(file_path):
     if not valid:
         return False, msg, None
 
-    category = os.path.basename(os.path.dirname(file_path))
+    category = file_path.parent.name
     player = current_player(board)
 
     if category == "win_in_1":
@@ -218,8 +217,8 @@ def main():
     parser.add_argument("--auto-fix", action="store_true")
     args = parser.parse_args()
 
-    files = glob.glob(
-        os.path.join(os.path.dirname(__file__), "games/connect4/*/*.json")
+    files = list(
+        (PROJ_ROOT / "performance_evaluation" / "games" / "connect4").glob("*/*.json")
     )
     all_ok = True
     for file_path in files:

@@ -1,16 +1,19 @@
 import json
-import os
+from pathlib import Path
+from python.utils import PROJ_ROOT
 
-base = "../performance_evaluation/games/connect4"
+base = PROJ_ROOT / "performance_evaluation" / "games" / "connect4"
 
 
 def write_json(path, data):
-    with open(os.path.join(base, path), "w") as f:
+    target = base / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "w") as f:
         json.dump(data, f, indent=2)
 
 
 write_json(
-    "prevent_enemy_winning_in_1/horizontal.json",
+    Path("prevent_enemy_winning_in_1") / "horizontal.json",
     {
         "board": [
             [0, 0, 0, 0, 0, 0, 0],
@@ -25,7 +28,7 @@ write_json(
 )
 
 write_json(
-    "prevent_enemy_winning_in_1/horizontal_flipped.json",
+    Path("prevent_enemy_winning_in_1") / "horizontal_flipped.json",
     {
         "board": [
             [0, 0, 0, 0, 0, 0, 0],
@@ -40,7 +43,7 @@ write_json(
 )
 
 write_json(
-    "forced_win_in_2/diagonal_setup.json",
+    Path("forced_win_in_2") / "diagonal_setup.json",
     {
         "board": [
             [0, 0, 0, 0, 0, 0, 0],
@@ -55,7 +58,7 @@ write_json(
 )
 
 write_json(
-    "forced_win_in_2/diagonal_setup_flipped.json",
+    Path("forced_win_in_2") / "diagonal_setup_flipped.json",
     {
         "board": [
             [0, 0, 0, 0, 0, 0, 0],
@@ -70,7 +73,7 @@ write_json(
 )
 
 write_json(
-    "prevent_enemy_winning_in_2/prevent_diagonal_setup.json",
+    Path("prevent_enemy_winning_in_2") / "prevent_diagonal_setup.json",
     {
         "board": [
             [0, 0, 0, 0, 0, 0, 0],
@@ -85,7 +88,7 @@ write_json(
 )
 
 write_json(
-    "prevent_enemy_winning_in_2/prevent_diagonal_setup_flipped.json",
+    Path("prevent_enemy_winning_in_2") / "prevent_diagonal_setup_flipped.json",
     {
         "board": [
             [0, 0, 0, 0, 0, 0, 0],

@@ -1,5 +1,4 @@
 import torch
-from pathlib import Path
 from .pybind.engine_bind import Connect4  # pyright: ignore
 from .checkpoint_manager import CheckpointManager
 from .injectors import (
@@ -11,6 +10,7 @@ from .train import self_play_and_train_loop
 import argparse
 import os
 import logging
+from python.utils import PROJ_ROOT
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,7 +90,7 @@ if __name__ == "__main__":
 
     manager = CheckpointManager(
         args.checkpoint_stem,
-        Path(os.getcwd()) / args.checkpoint_dir,
+        PROJ_ROOT / args.checkpoint_dir,
         args.max_checkpoints,
     )
 

@@ -1,6 +1,7 @@
 import subprocess
 import pytest
-import os
+from pathlib import Path
+from python.utils import BUILD_DIR
 
 
 def test_inference_server_missing_network():
@@ -8,18 +9,19 @@ def test_inference_server_missing_network():
     Test that the inference server gracefully handles a missing network file
     and exits with a clean error code rather than crashing.
     """
-    binary_path = "build/inference_server/inference_server"
-    if not os.path.exists(binary_path):
+
+    binary_path = BUILD_DIR / "inference_server" / "inference_server"
+    if not binary_path.exists():
         pytest.skip("inference_server binary not found. Skipping test.")
 
     # Run the binary with a non-existent network
     result = subprocess.run(
         [
-            binary_path,
+            str(binary_path),
             "--network-path",
             "this_file_does_not_exist.pt",
             "--socket",
-            "/tmp/dummy.sock",
+            str(Path("/tmp") / "dummy.sock"),
         ],
         capture_output=True,
         text=True,

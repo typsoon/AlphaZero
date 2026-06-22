@@ -1,15 +1,24 @@
-import os
+from pathlib import Path
+from python.utils import PROJ_ROOT
 
 
 def task_setup_service():
     """Install the inference server as a systemd user service."""
-    repo_dir = os.getcwd()
-    home_dir = os.path.expanduser("~")
+    home_dir = Path.home()
+    config_systemd = home_dir / ".config" / "systemd" / "user"
+    config_alphazero = home_dir / ".config" / "alphazero"
+    models_dir = config_alphazero / "models"
+    service_file = config_systemd / "alphazero-inference.service"
+    env_file = config_alphazero / "inference.env"
+
+    source_service = PROJ_ROOT / "inference_server" / "alphazero-inference.service"
+    source_env = PROJ_ROOT / "inference_server" / "inference.env.example"
+
     return {
         "actions": [
-            f"mkdir -p {home_dir}/.config/systemd/user {home_dir}/.config/alphazero/models",
-            f"sed 's|{{REPO_DIR}}|{repo_dir}|g' inference_server/alphazero-inference.service > {home_dir}/.config/systemd/user/alphazero-inference.service",
-            f"test -f {home_dir}/.config/alphazero/inference.env || sed -e 's|{{REPO_DIR}}|{repo_dir}|g' -e 's|{{HOME_DIR}}|{home_dir}|g' inference_server/inference.env.example > {home_dir}/.config/alphazero/inference.env",
+            f"mkdir -p {config_systemd} {models_dir}",
+            f"sed 's|{{REPO_DIR}}|{PROJ_ROOT}|g' {source_service} > {service_file}",
+            f"test -f {env_file} || sed -e 's|{{REPO_DIR}}|{PROJ_ROOT}|g' -e 's|{{HOME_DIR}}|{home_dir}|g' {source_env} > {env_file}",
             "systemctl --user daemon-reload",
         ]
     }

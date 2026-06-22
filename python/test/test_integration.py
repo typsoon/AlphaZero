@@ -5,8 +5,10 @@ import socket
 import json
 import requests
 import os
+from pathlib import Path
+from python.utils import BUILD_DIR
 
-SOCKET_PATH = "/tmp/alphazero_test.sock"
+SOCKET_PATH = str(Path("/tmp") / "alphazero_test.sock")
 PORT = 8001
 
 
@@ -15,8 +17,8 @@ def inference_server():
     if os.path.exists(SOCKET_PATH):
         os.remove(SOCKET_PATH)
 
-    executable = "build/inference_server/inference_server"
-    model_path = "inference_server/tests/payloads/dummy_model.pt"
+    executable = str(BUILD_DIR / "inference_server" / "inference_server")
+    model_path = str(Path("inference_server") / "tests" / "payloads" / "dummy_model.pt")
 
     p = subprocess.Popen(
         [

@@ -1,7 +1,7 @@
 import argparse
-import glob
 import json
 import os
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -9,6 +9,7 @@ import time
 import tempfile
 import uuid
 import http.client
+from python.utils import PROJ_ROOT
 
 
 class UnixSocketHTTPConnection(http.client.HTTPConnection):
@@ -70,7 +71,7 @@ def main():
     args = parser.parse_args()
 
     temp_dir = tempfile.mkdtemp(prefix="inference_service_connect4_")
-    socket_path = os.path.join(temp_dir, f"socket_{uuid.uuid4().hex[:8]}.sock")
+    socket_path = str(Path(temp_dir) / f"socket_{uuid.uuid4().hex[:8]}.sock")
 
     cmd = [args.inference_binary]
     if args.inference_binary.endswith(".py"):
@@ -110,10 +111,14 @@ def main():
 
         print("Server is ready. Starting evaluation...")
 
-        game_files = glob.glob("performance_evaluation/games/connect4/*/*.json")
+        game_files = list(
+            (PROJ_ROOT / "performance_evaluation" / "games" / "connect4").glob(
+                "*/*.json"
+            )
+        )
         for file_path in sorted(game_files):
-            category = os.path.basename(os.path.dirname(file_path))
-            test_name = os.path.basename(file_path)
+            category = file_path.parent.name
+            test_name = file_path.name
 
             with open(file_path, "r") as f:
                 data = json.load(f)
@@ -170,8 +175,8 @@ def main():
             server_process.wait()
 
         # Write results
-        results_path = "performance_evaluation/results.json"
-        os.makedirs(os.path.dirname(results_path), exist_ok=True)
+        results_path = PROJ_ROOT / "performance_evaluation" / "results.json"
+        results_path.parent.mkdir(parents=True, exist_ok=True)
         with open(results_path, "w") as f:
             json.dump(results, f, indent=2)
         print(f"Evaluation complete. Results written to {results_path}")
