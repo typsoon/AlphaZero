@@ -1,12 +1,29 @@
 from pathlib import Path
-from python.utils import PROJ_ROOT
+from python.utils import PROJ_ROOT, BUILD_DIR
+import platformdirs
+
+
+def task_install_service_binary():
+    """Copy the inference server binary to ~/.local/bin."""
+    home_dir = Path.home()
+    bin_dir = home_dir / ".local" / "bin"
+    installed_bin = bin_dir / "alphazero-inference-server"
+    compiled_bin = BUILD_DIR / "inference_server" / "inference_server"
+    return {
+        "actions": [
+            f"mkdir -p {bin_dir}",
+            f"cp {compiled_bin} {installed_bin}",
+            f"chmod +x {installed_bin}",
+        ],
+        "task_dep": ["build"],
+    }
 
 
 def task_setup_service():
     """Install the inference server as a systemd user service."""
     home_dir = Path.home()
     config_systemd = home_dir / ".config" / "systemd" / "user"
-    config_alphazero = home_dir / ".config" / "alphazero"
+    config_alphazero = Path(platformdirs.user_config_dir("alphazero"))
     models_dir = config_alphazero / "models"
     service_file = config_systemd / "alphazero-inference.service"
     env_file = config_alphazero / "inference.env"
@@ -20,7 +37,8 @@ def task_setup_service():
             f"sed 's|{{REPO_DIR}}|{PROJ_ROOT}|g' {source_service} > {service_file}",
             f"test -f {env_file} || sed -e 's|{{REPO_DIR}}|{PROJ_ROOT}|g' -e 's|{{HOME_DIR}}|{home_dir}|g' {source_env} > {env_file}",
             "systemctl --user daemon-reload",
-        ]
+        ],
+        "task_dep": ["install_service_binary"],
     }
 
 
@@ -50,7 +68,7 @@ def task_start_service():
         "actions": [
             f"systemctl --user is-active --quiet alphazero-inference.service && echo '\\033[33mService is already running! Use `doit restart_service` to apply changes.\\033[0m' || (systemctl --user start alphazero-inference.service && sleep 2 && {check_cmd})",
         ],
-        "task_dep": ["setup_service", "build"],
+        "task_dep": ["setup_service", "install_service_binary"],
     }
 
 
@@ -61,7 +79,7 @@ def task_restart_service():
         "actions": [
             f"systemctl --user restart alphazero-inference.service && sleep 2 && {check_cmd}",
         ],
-        "task_dep": ["setup_service", "build"],
+        "task_dep": ["setup_service", "install_service_binary"],
     }
 
 
