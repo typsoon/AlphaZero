@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 from doit_systemd import *  # noqa: F403
 
 DOIT_CONFIG = {
@@ -223,10 +224,13 @@ def task_check_format_connect4_puzzles():
 
 def task_test_performance():
     """Run performance evaluation and generate the HTML report."""
+    default_network_path = (
+        Path(__file__).parent / "checkpoints" / "scripted" / "AZNetwork_0.pt_scripted"
+    )
     return {
         "actions": [
             with_report(
-                "python -m performance_evaluation.evaluator --network-path AZNetwork.pt_scripted --inference-binary build/inference_server/inference_server"
+                f"python -m performance_evaluation.evaluator --network-path {default_network_path} --inference-binary build/inference_server/inference_server"
             ),
             with_report("python -m performance_evaluation.generate_report"),
         ],
