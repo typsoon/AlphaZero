@@ -15,3 +15,4 @@ vcpkg/
 .cache/
 checkpoints/
 compile_commands.json
+vcpkg_installed/

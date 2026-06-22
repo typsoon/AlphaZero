@@ -1,5 +1,5 @@
 import shutil
-from pathlib import Path
+from python.utils import PROJ_ROOT, BUILD_DIR
 from doit_systemd import *  # noqa: F403
 
 DOIT_CONFIG = {
@@ -22,6 +22,7 @@ def get_clang_format_cmd(args):
         "libtorch",
         ".git",
         "vcpkg",
+        "vcpkg_installed",
     ]
 
     fd_bin = shutil.which("fd") or shutil.which("fdfind")
@@ -44,6 +45,7 @@ def get_cmake_files_cmd(cmd, args):
         "libtorch",
         ".git",
         "vcpkg",
+        "vcpkg_installed",
     ]
 
     fd_bin = shutil.which("fd") or shutil.which("fdfind")
@@ -83,6 +85,7 @@ def get_ruff_cmd(cmd_prefix):
         "libtorch",
         ".git",
         "vcpkg",
+        "vcpkg_installed",
     ]
     excludes_str = " ".join([f"--exclude {e}" for e in excludes])
     return f"{cmd_prefix} . {excludes_str}"
@@ -120,24 +123,31 @@ def task_format_cpp():
 
 def task_setup_vcpkg():
     """Clone and bootstrap vcpkg locally, then install C++ dependencies."""
+    vcpkg_dir = PROJ_ROOT / "vcpkg"
+    vcpkg_bin = vcpkg_dir / "vcpkg"
+    vcpkg_bootstrap = vcpkg_dir / "bootstrap-vcpkg.sh"
     return {
         "actions": [
-            "test -d vcpkg || git clone https://github.com/microsoft/vcpkg.git",
-            "test -f vcpkg/vcpkg || ./vcpkg/bootstrap-vcpkg.sh",
-            "./vcpkg/vcpkg install spdlog nlohmann-json json-schema-validator asio crow cpputest",
+            f"test -d {vcpkg_dir} || git clone https://github.com/microsoft/vcpkg.git {vcpkg_dir}",
+            f"test -f {vcpkg_bin} || {vcpkg_bootstrap}",
+            f"{vcpkg_bin} install",
         ]
     }
 
 
 def task_build():
     """Build the C++ components locally, optionally using ccache if available."""
+    cmake_cache = BUILD_DIR / "CMakeCache.txt"
+    compile_commands = BUILD_DIR / "compile_commands.json"
+    toolchain = PROJ_ROOT / "vcpkg" / "scripts" / "buildsystems" / "vcpkg.cmake"
+
     cmake_cmd = (
-        "cmake -S . -B build "
+        f"cmake -S {PROJ_ROOT} -B {BUILD_DIR} "
         "-DCMAKE_PREFIX_PATH=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)') "
         "-DPython3_EXECUTABLE=$(which python) "
         "-DPYTHON_EXECUTABLE=$(which python) "
         "-DBUILD_TESTS=ON "
-        "-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake"
+        f"-DCMAKE_TOOLCHAIN_FILE={toolchain}"
     )
 
     # Automatically use ccache to speed up compilation if the user has it installed
@@ -148,9 +158,9 @@ def task_build():
 
     return {
         "actions": [
-            f"test -f build/CMakeCache.txt || {cmake_cmd}",
-            "cmake --build build -j$(nproc)",
-            "test -f build/compile_commands.json && ln -sf build/compile_commands.json . || true",
+            f"test -f {cmake_cache} || {cmake_cmd}",
+            f"cmake --build {BUILD_DIR} -j$(nproc)",
+            f"test -f {compile_commands} && ln -sf {compile_commands} {PROJ_ROOT} || true",
         ],
         "task_dep": ["setup_vcpkg"],
     }
@@ -158,27 +168,33 @@ def task_build():
 
 def task_test_python():
     """Run Python integration tests."""
-    return {"actions": [with_report("pytest python/test/")]}
+    return {"actions": [with_report(f"pytest {PROJ_ROOT / 'python' / 'test'}")]}
 
 
 def task_test_train_loss():
     """Run the AlphaZero training loss convergence test."""
-    return {"actions": [with_report("pytest -s python/test/test_train_loss.py")]}
+    return {
+        "actions": [
+            with_report(
+                f"pytest -s {PROJ_ROOT / 'python' / 'test' / 'test_train_loss.py'}"
+            )
+        ]
+    }
 
 
 def task_test_cpp():
     """Run C++ tests."""
+    test_bin = BUILD_DIR / "inference_server" / "tests" / "inference_server_tests"
     return {
-        "actions": [with_report("build/inference_server/tests/inference_server_tests")],
+        "actions": [with_report(f"{test_bin}")],
         "task_dep": ["build"],
     }
 
 
 def task_test_ts():
     """Run TypeScript server tests."""
-    return {
-        "actions": [with_report("cd gameplay_server && npm install && npm run test")]
-    }
+    ts_dir = PROJ_ROOT / "gameplay_server"
+    return {"actions": [with_report(f"cd {ts_dir} && npm install && npm run test")]}
 
 
 def task_check_all():
@@ -225,12 +241,13 @@ def task_check_format_connect4_puzzles():
 def task_test_performance():
     """Run performance evaluation and generate the HTML report."""
     default_network_path = (
-        Path(__file__).parent / "checkpoints" / "scripted" / "AZNetwork_0.pt_scripted"
+        PROJ_ROOT / "checkpoints" / "scripted" / "AZNetwork_0.pt_scripted"
     )
+    inference_bin = BUILD_DIR / "inference_server" / "inference_server"
     return {
         "actions": [
             with_report(
-                f"python -m performance_evaluation.evaluator --network-path {default_network_path} --inference-binary build/inference_server/inference_server"
+                f"python -m performance_evaluation.evaluator --network-path {default_network_path} --inference-binary {inference_bin}"
             ),
             with_report("python -m performance_evaluation.generate_report"),
         ],

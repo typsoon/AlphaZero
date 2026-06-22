@@ -13,15 +13,7 @@
 #include <vector>
 
 NetworkInferer::NetworkInferer(std::shared_ptr<Network> network, torch::Device device)
-    : Inferer(device), network(network), infer_method(network->get_method("infer")) {
-    // Load the network weights here if needed, e.g.:
-    // TODO: come back to this
-    // torch::load(network, network_file_path);
-
-    // network.to(device);
-    // network.eval();
-    // torch::jit::script::Module module = torch::jit::load(network_file_path);
-}
+    : Inferer(device), network(network), infer_method(network->get_method("infer")) {}
 
 // infer method implementation
 vector<inference_result> NetworkInferer::infer(std::vector<GameState> game_states) {

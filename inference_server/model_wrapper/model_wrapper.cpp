@@ -45,8 +45,8 @@ class Connect4ModelWrapper final : public ModelWrapper {
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-        // TODO: Make this log better
-        spdlog::info("Elapsed time: {} ms", duration.count());
+        spdlog::info("Connect4 prediction finished in {} ms (batch size: {})", duration.count(),
+                     board_json.size());
 
         return nlohmann::json{{"policy", policy}, {"value", value}}.dump();
     }

@@ -1,0 +1,12 @@
+{
+  "name": "alphazero",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "spdlog",
+    "nlohmann-json",
+    "json-schema-validator",
+    "asio",
+    "crow",
+    "cpputest"
+  ]
+}
