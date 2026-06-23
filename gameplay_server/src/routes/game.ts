@@ -24,7 +24,23 @@ export default async function gameRoutes(server: FastifyInstance) {
   });
 
   server.post("/game/reset", async (req, reply) => {
+    const body = req.body as { starting_player?: 'human' | 'ai' } | null;
+    const startingPlayer = body?.starting_player || 'human';
+
     game.reset();
+
+    if (startingPlayer === 'ai') {
+      try {
+        const aiGameState = toCppInferenceGameState(game.get_board_state().board);
+        const aiMove = await aiAgent.act(aiGameState);
+        game.step(aiMove);
+      } catch (e: any) {
+        server.log.error(e);
+        reply.code(500);
+        return { status: "error", message: e.message || "AI failed to make starting move" };
+      }
+    }
+
     return { status: "ok", message: "Game reset" };
   });
 
