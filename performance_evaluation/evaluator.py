@@ -63,6 +63,9 @@ def main():
         "--inference-binary", required=True, help="Path to the inference server binary"
     )
     parser.add_argument(
+        "--mcts-search-depth", type=int, default=800, help="MCTS search depth"
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -85,6 +88,8 @@ def main():
             "cuda",
             "--socket",
             socket_path,
+            "--mcts-search-depth",
+            str(args.mcts_search_depth),
         ]
     )
 

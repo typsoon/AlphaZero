@@ -14,10 +14,13 @@ namespace {
 class Connect4ModelWrapper final : public ModelWrapper {
     torch::Device device;
     MCTS mcts;
+    int search_depth;
+    int batch_size;
 
   public:
-    Connect4ModelWrapper(std::string network_path, std::string device)
-        : device(torch::Device(std::move(device))), mcts(std::move(network_path), this->device) {}
+    Connect4ModelWrapper(std::string network_path, std::string device, int search_depth, int batch_size)
+        : device(torch::Device(std::move(device))), mcts(std::move(network_path), this->device),
+          search_depth(search_depth), batch_size(batch_size) {}
 
     std::string predict(const std::string &request_payload) override {
         const auto payload_json = nlohmann::json::parse(request_payload);
@@ -41,7 +44,7 @@ class Connect4ModelWrapper final : public ModelWrapper {
         Connect4 game(board, device);
 
         auto start = std::chrono::high_resolution_clock::now();
-        const auto [policy, value] = mcts.search(game);
+        const auto [policy, value] = mcts.search(game, search_depth, batch_size);
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
@@ -55,6 +58,7 @@ class Connect4ModelWrapper final : public ModelWrapper {
 } // namespace
 
 std::shared_ptr<ModelWrapper> create_connect4_model_wrapper(const std::string &network_path,
-                                                            const std::string &device) {
-    return std::make_shared<Connect4ModelWrapper>(network_path, device);
+                                                            const std::string &device,
+                                                            int mcts_search_depth, int mcts_batch_size) {
+    return std::make_shared<Connect4ModelWrapper>(network_path, device, mcts_search_depth, mcts_batch_size);
 }

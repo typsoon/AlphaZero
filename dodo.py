@@ -253,3 +253,31 @@ def task_test_performance():
         ],
         "task_dep": ["build"],
     }
+
+
+def task_run_client():
+    """Run the gameplay client in dev mode."""
+    client_dir = PROJ_ROOT / "gameplay_client"
+    return {"actions": [f"cd {client_dir} && npm install && npm run dev"]}
+
+
+def task_run_game_server():
+    """Run the gameplay server in dev mode."""
+    server_dir = PROJ_ROOT / "gameplay_server"
+    return {"actions": [f"cd {server_dir} && npm install && npm run start"]}
+
+
+def task_benchmark_batch_size():
+    """Run the batch size benchmark."""
+    default_network_path = (
+        PROJ_ROOT / "checkpoints" / "scripted" / "AZNetwork_0.pt_scripted"
+    )
+    inference_bin = BUILD_DIR / "inference_server" / "inference_server"
+    return {
+        "actions": [
+            with_report(
+                f"python -m performance_evaluation.benchmark_batch_size --network-path {default_network_path} --inference-binary {inference_bin}"
+            )
+        ],
+        "task_dep": ["build"],
+    }

@@ -11,6 +11,7 @@ class ModelWrapper {
 };
 
 std::shared_ptr<ModelWrapper> create_connect4_model_wrapper(const std::string &network_path,
-                                                            const std::string &device);
+                                                            const std::string &device,
+                                                            int mcts_search_depth, int mcts_batch_size);
 
 #endif // ALPHAZERO_INFERENCE_SERVER_MODEL_WRAPPER_MODEL_WRAPPER_HPP

@@ -12,6 +12,7 @@ def task_install_service_binary():
     return {
         "actions": [
             f"mkdir -p {bin_dir}",
+            f"rm -f {installed_bin}",
             f"cp {compiled_bin} {installed_bin}",
             f"chmod +x {installed_bin}",
         ],
@@ -34,8 +35,8 @@ def task_setup_service():
     return {
         "actions": [
             f"mkdir -p {config_systemd} {models_dir}",
-            f"sed 's|{{REPO_DIR}}|{PROJ_ROOT}|g' {source_service} > {service_file}",
-            f"test -f {env_file} || sed -e 's|{{REPO_DIR}}|{PROJ_ROOT}|g' -e 's|{{HOME_DIR}}|{home_dir}|g' {source_env} > {env_file}",
+            f"cp {source_service} {service_file}",
+            f"test -f {env_file} || sed -e 's|{{HOME_DIR}}|{home_dir}|g' {source_env} > {env_file}",
             "systemctl --user daemon-reload",
         ],
         "task_dep": ["install_service_binary"],

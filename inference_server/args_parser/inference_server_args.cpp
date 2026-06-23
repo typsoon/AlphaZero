@@ -43,6 +43,7 @@ void print_inference_server_usage(const char *program_name) {
                  "cuda)\n"
               << "  --socket <path>         Unix socket path (default: "
                  "/tmp/alphazero.sock)\n"
+              << "  --mcts-search-depth <depth> MCTS search depth (default: 800)\n"
               << "  -h, --help              Show this help message\n";
 }
 
@@ -65,6 +66,26 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
             continue;
         }
         if (read_option_value(i, argc, argv, arg, "--socket", args.socket, error)) {
+            continue;
+        }
+        std::string depth_str;
+        if (read_option_value(i, argc, argv, arg, "--mcts-search-depth", depth_str, error)) {
+            try {
+                args.mcts_search_depth = std::stoi(depth_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --mcts-search-depth: " + depth_str;
+                return false;
+            }
+            continue;
+        }
+        std::string batch_str;
+        if (read_option_value(i, argc, argv, arg, "--mcts-batch-size", batch_str, error)) {
+            try {
+                args.mcts_batch_size = std::stoi(batch_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --mcts-batch-size: " + batch_str;
+                return false;
+            }
             continue;
         }
 

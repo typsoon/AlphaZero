@@ -1,3 +1,4 @@
+#include "../args_parser/inference_server_args.hpp"
 #include "../model_wrapper/model_wrapper.hpp"
 #include "../schema_validator/schema_validator.hpp"
 
@@ -50,7 +51,7 @@ TEST_GROUP(ModelWrapperTestGroup) {
     void setup() {
         std::string model_path =
             std::string(ALPHAZERO_REPO_ROOT) + "/inference_server/tests/payloads/dummy_model.pt";
-        wrapper = create_connect4_model_wrapper(model_path, "cpu");
+        wrapper = create_connect4_model_wrapper(model_path, "cpu", 800, 32);
     }
 
     void teardown() {}
@@ -79,11 +80,45 @@ TEST(ModelWrapperTestGroup, InvalidModelPathThrows) {
     std::string bad_path = "non_existent.pt";
     bool thrown = false;
     try {
-        create_connect4_model_wrapper(bad_path, "cpu");
+        create_connect4_model_wrapper(bad_path, "cpu", 800, 32);
     } catch (...) {
         thrown = true;
     }
     CHECK_TRUE(thrown);
+}
+
+TEST_GROUP(ArgsParserTestGroup){void setup(){} void teardown(){}};
+
+TEST(ArgsParserTestGroup, DefaultValues) {
+    InferenceServerArgs args;
+    bool show_help = false;
+    std::string error;
+    const char *argv[] = {"server", "--network-path", "model.pt"};
+    bool result = parse_inference_server_args(3, (char **)argv, args, show_help, error);
+    CHECK_TRUE(result);
+    CHECK_EQUAL("model.pt", args.network_path);
+    CHECK_EQUAL("cuda", args.device);
+    CHECK_EQUAL("/tmp/alphazero.sock", args.socket);
+    CHECK_EQUAL(800, args.mcts_search_depth);
+}
+
+TEST(ArgsParserTestGroup, CustomDepth) {
+    InferenceServerArgs args;
+    bool show_help = false;
+    std::string error;
+    const char *argv[] = {"server", "--network-path", "model.pt", "--mcts-search-depth", "400"};
+    bool result = parse_inference_server_args(5, (char **)argv, args, show_help, error);
+    CHECK_TRUE(result);
+    CHECK_EQUAL(400, args.mcts_search_depth);
+}
+
+TEST(ArgsParserTestGroup, InvalidDepth) {
+    InferenceServerArgs args;
+    bool show_help = false;
+    std::string error;
+    const char *argv[] = {"server", "--network-path", "model.pt", "--mcts-search-depth", "abc"};
+    bool result = parse_inference_server_args(5, (char **)argv, args, show_help, error);
+    CHECK_FALSE(result);
 }
 
 #include <CppUTest/MemoryLeakWarningPlugin.h>
@@ -91,6 +126,7 @@ TEST(ModelWrapperTestGroup, InvalidModelPathThrows) {
 
 int main(int ac, char **av) {
     MemoryLeakWarningPlugin::turnOffNewDeleteOverloads();
+    // TODO: Explain what was the problem with that
     TestRegistry::getCurrentRegistry()->removePluginByName("MemoryLeakWarningPlugin");
     return CommandLineTestRunner::RunAllTests(ac, av);
 }

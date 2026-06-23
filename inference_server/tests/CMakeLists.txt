@@ -1,8 +1,10 @@
 find_package(CppUTest CONFIG REQUIRED)
 
 add_executable(
-  inference_server_tests test_main.cpp ../model_wrapper/model_wrapper.cpp
-                         ../schema_validator/schema_validator.cpp)
+  inference_server_tests
+  test_main.cpp ../model_wrapper/model_wrapper.cpp
+  ../schema_validator/schema_validator.cpp
+  ../args_parser/inference_server_args.cpp)
 
 target_link_libraries(
   inference_server_tests

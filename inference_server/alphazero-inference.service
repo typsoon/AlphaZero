@@ -4,10 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
+# Provide default values (overridden by EnvironmentFile)
+Environment="MCTS_SEARCH_DEPTH=800"
+Environment="MCTS_BATCH_SIZE=1"
 # Load environment variables from this file
 EnvironmentFile=%h/.config/alphazero/inference.env
 # Execute the server with the variables
-ExecStart=%h/.local/bin/alphazero-inference-server --network-path ${NETWORK_PATH} --device ${DEVICE} --socket ${SOCKET_PATH}
+ExecStart=%h/.local/bin/alphazero-inference-server --network-path ${NETWORK_PATH} --device ${DEVICE} --socket ${SOCKET_PATH} --mcts-search-depth ${MCTS_SEARCH_DEPTH} --mcts-batch-size ${MCTS_BATCH_SIZE}
 Restart=on-failure
 RestartSec=5s
 
