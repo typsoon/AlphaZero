@@ -6,6 +6,17 @@ DOIT_CONFIG = {
     "verbosity": 2,
 }
 
+GLOBAL_EXCLUDES = [
+    "build",
+    "pybind11",
+    "node_modules",
+    "_deps",
+    "libtorch",
+    ".git",
+    "vcpkg",
+    "vcpkg_installed",
+]
+
 
 def with_report(cmd):
     """Wraps a shell command with colored PASS/FAIL output."""
@@ -14,16 +25,7 @@ def with_report(cmd):
 
 def get_clang_format_cmd(args):
     """Returns the correct clang-format command using fd (if available) or falling back to find."""
-    excludes = [
-        "build",
-        "pybind11",
-        "node_modules",
-        "_deps",
-        "libtorch",
-        ".git",
-        "vcpkg",
-        "vcpkg_installed",
-    ]
+    excludes = GLOBAL_EXCLUDES
 
     fd_bin = shutil.which("fd") or shutil.which("fdfind")
     if fd_bin:
@@ -37,16 +39,7 @@ def get_clang_format_cmd(args):
 
 def get_cmake_files_cmd(cmd, args):
     """Returns the correct command for cmake files using fd (if available) or falling back to find."""
-    excludes = [
-        "build",
-        "pybind11",
-        "node_modules",
-        "_deps",
-        "libtorch",
-        ".git",
-        "vcpkg",
-        "vcpkg_installed",
-    ]
+    excludes = GLOBAL_EXCLUDES
 
     fd_bin = shutil.which("fd") or shutil.which("fdfind")
     if fd_bin:
@@ -77,16 +70,7 @@ def task_format_cmake():
 
 def get_ruff_cmd(cmd_prefix):
     """Returns the correct ruff command with exclusions."""
-    excludes = [
-        "build",
-        "pybind11",
-        "node_modules",
-        "_deps",
-        "libtorch",
-        ".git",
-        "vcpkg",
-        "vcpkg_installed",
-    ]
+    excludes = GLOBAL_EXCLUDES
     excludes_str = " ".join([f"--exclude {e}" for e in excludes])
     return f"{cmd_prefix} . {excludes_str}"
 
@@ -104,6 +88,27 @@ def task_check_python_lint():
 def task_check_cpp_format():
     """Check C++ formatting using clang-format."""
     return {"actions": [with_report(get_clang_format_cmd("--dry-run -Werror"))]}
+
+
+def get_clang_tidy_cmd(args):
+    """Returns the correct clang-tidy command using fd (if available) or falling back to find."""
+    excludes = GLOBAL_EXCLUDES
+
+    fd_bin = shutil.which("fd") or shutil.which("fdfind")
+    if fd_bin:
+        excludes_str = " ".join([f"-E {e}" for e in excludes])
+        return (
+            f"{fd_bin} -e cpp -e h -e hpp {excludes_str} -x clang-tidy -p build {args}"
+        )
+    else:
+        excludes_find = " -o ".join([f"-name {e}" for e in excludes])
+        find_cmd = f"find . -type d \\( {excludes_find} \\) -prune -o -type f \\( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \\) -print"
+        return f"{find_cmd} | xargs -P $(nproc) -n 1 -r clang-tidy -p build {args}"
+
+
+def task_check_cpp_lint():
+    """Lint C++ code using clang-tidy."""
+    return {"actions": [with_report(get_clang_tidy_cmd(""))], "task_dep": ["build"]}
 
 
 def task_format_python():
@@ -197,6 +202,42 @@ def task_test_ts():
     return {"actions": [with_report(f"cd {ts_dir} && npm install && npm run test")]}
 
 
+def task_check_ts_format():
+    """Check TypeScript formatting."""
+    client_dir = PROJ_ROOT / "gameplay_client"
+    server_dir = PROJ_ROOT / "gameplay_server"
+    return {
+        "actions": [
+            with_report(f"cd {client_dir} && npm install && npm run format:check"),
+            with_report(f"cd {server_dir} && npm install && npm run format:check"),
+        ]
+    }
+
+
+def task_check_ts_lint():
+    """Lint TypeScript code."""
+    client_dir = PROJ_ROOT / "gameplay_client"
+    server_dir = PROJ_ROOT / "gameplay_server"
+    return {
+        "actions": [
+            with_report(f"cd {client_dir} && npm install && npm run lint"),
+            with_report(f"cd {server_dir} && npm install && npm run lint"),
+        ]
+    }
+
+
+def task_format_ts():
+    """Format TypeScript code."""
+    client_dir = PROJ_ROOT / "gameplay_client"
+    server_dir = PROJ_ROOT / "gameplay_server"
+    return {
+        "actions": [
+            f"cd {client_dir} && npm install && npm run format",
+            f"cd {server_dir} && npm install && npm run format",
+        ]
+    }
+
+
 def task_check_all():
     """Run all CI checks."""
     return {
@@ -205,9 +246,12 @@ def task_check_all():
             "check_python_format",
             "check_python_lint",
             "check_cpp_format",
+            # "check_cpp_lint", # Removed because it takes too long to run on every check_all
             "check_cmake_format",
             "check_cmake_lint",
             "check_format_connect4_puzzles",
+            "check_ts_format",
+            "check_ts_lint",
             "validate_connect4_puzzles",
             "test_cpp",
             "test_python",
@@ -280,4 +324,13 @@ def task_benchmark_batch_size():
             )
         ],
         "task_dep": ["build"],
+    }
+
+
+def task_clear_db():
+    """Clear the games database by removing the SQLite files."""
+    return {
+        "actions": [
+            "rm -f gameplay_server/games.db gameplay_server/games.db-wal gameplay_server/games.db-shm"
+        ]
     }

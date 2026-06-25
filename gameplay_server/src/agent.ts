@@ -7,7 +7,7 @@ export class AlphaZeroAgent {
     this.socketPath = socketPath;
   }
 
-  async act(gameState: any): Promise<number> {
+  async act(gameState: Record<string, unknown>): Promise<number> {
     return new Promise((resolve, reject) => {
       const postData = JSON.stringify({ game_state: gameState });
       const options = {
@@ -29,7 +29,11 @@ export class AlphaZeroAgent {
           try {
             const data = JSON.parse(body);
             if (!Array.isArray(data.policy)) {
-              reject(new Error(data.message || 'Invalid response from inference server'));
+              reject(
+                new Error(
+                  data.message || 'Invalid response from inference server',
+                ),
+              );
               return;
             }
             const policy: number[] = data.policy;

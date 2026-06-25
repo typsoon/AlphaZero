@@ -1,20 +1,21 @@
-import fastify from "fastify";
-import gameRoutes from "./routes/game.js";
+import fastify from 'fastify';
+import websocketPlugin from '@fastify/websocket';
+import gameRoutes from './routes/game.js';
 
-const server = fastify({ logger: true })
+const server = fastify({ logger: true });
 
-server.register(gameRoutes)
+server.register(websocketPlugin);
+server.register(gameRoutes);
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8000
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8000;
 
-let start = async () => {
+const start = async () => {
   try {
-    await server.listen({ port: PORT, host: '0.0.0.0' })
+    await server.listen({ port: PORT, host: '0.0.0.0' });
+  } catch (error) {
+    server.log.error(error);
+    process.exit(1);
   }
-  catch (error) {
-    server.log.error(error)
-    process.exit(1)
-  }
-}
+};
 
-start()
+start();

@@ -32,6 +32,7 @@ class SocketPathGuard {
 template <typename M, typename S>
 void set_up_and_run_server(std::string socket_path, std::shared_ptr<M> model,
                            std::shared_ptr<S> schema_validator) {
+    std::filesystem::create_directories(std::filesystem::path(socket_path).parent_path());
     SocketPathGuard socket_path_guard(socket_path);
     crow::SimpleApp app;
 

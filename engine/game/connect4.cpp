@@ -167,12 +167,17 @@ void Connect4::render() const {
     for (int row = 0; row < ROWS; row++) {
         for (int col = 0; col < COLS; col++) {
             char piece;
-            if (board[row][col] == 1)
+            switch (board[row][col]) {
+            case 1:
                 piece = 'X';
-            else if (board[row][col] == -1)
+                break;
+            case -1:
                 piece = 'O';
-            else
+                break;
+            default:
                 piece = '.';
+                break;
+            }
             board_str += piece;
             board_str += " ";
         }

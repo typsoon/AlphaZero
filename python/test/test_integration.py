@@ -108,7 +108,7 @@ def game_server(inference_server):
     for _ in range(50):
         try:
             resp = requests.get(
-                f"http://localhost:{PORT}/game/status", headers={"Connection": "close"}
+                f"http://localhost:{PORT}/agents", headers={"Connection": "close"}
             )
             if resp.status_code == 200:
                 break
@@ -123,18 +123,67 @@ def game_server(inference_server):
 
 
 def test_game_server_e2e(game_server):
+    create_resp = requests.post(
+        f"http://localhost:{PORT}/game/create",
+        json={"p1_type": "human", "p2_type": "ai", "p2_agent": SOCKET_PATH},
+        headers={"Connection": "close"},
+    )
+    assert create_resp.status_code == 200
+    create_data = create_resp.json()
+    assert create_data["status"] == "ok"
+    game_id = create_data["game_id"]
+    p1_id = create_data["p1_id"]
+
     status_resp = requests.get(
-        f"http://localhost:{PORT}/game/status", headers={"Connection": "close"}
+        f"http://localhost:{PORT}/game/{game_id}/status",
+        headers={"Connection": "close"},
     )
     assert status_resp.status_code == 200
 
     move_resp = requests.post(
-        f"http://localhost:{PORT}/game/move",
-        json={"column": 3},
+        f"http://localhost:{PORT}/game/{game_id}/move",
+        json={"column": 3, "player_id": p1_id},
         headers={"Connection": "close"},
     )
     assert move_resp.status_code == 200
 
     resp_data = move_resp.json()
     assert resp_data["status"] == "ok"
-    assert "ai_column" in resp_data
+
+
+def test_human_vs_human_full_game(game_server):
+    create_resp = requests.post(
+        f"http://localhost:{PORT}/game/create",
+        json={"p1_type": "human", "p2_type": "human"},
+        headers={"Connection": "close"},
+    )
+    assert create_resp.status_code == 200
+    create_data = create_resp.json()
+    assert create_data["status"] == "ok"
+    game_id = create_data["game_id"]
+    p1_id = create_data["p1_id"]
+    p2_id = create_data["p2_id"]
+
+    # Play a game: Player 1 plays in column 0, Player 2 plays in column 1.
+    # P1: 0, P2: 1, P1: 0, P2: 1, P1: 0, P2: 1, P1: 0 -> P1 wins vertically.
+    moves = [
+        (0, p1_id),
+        (1, p2_id),
+        (0, p1_id),
+        (1, p2_id),
+        (0, p1_id),
+        (1, p2_id),
+        (0, p1_id),
+    ]
+
+    for col, player_id in moves:
+        move_resp = requests.post(
+            f"http://localhost:{PORT}/game/{game_id}/move",
+            json={"column": col, "player_id": player_id},
+            headers={"Connection": "close"},
+        )
+        assert move_resp.status_code == 200
+        resp_data = move_resp.json()
+        assert resp_data["status"] == "ok"
+
+    assert resp_data.get("is_terminal") is True

@@ -11,9 +11,9 @@
 #include <memory>
 #include <random>
 #include <spdlog/spdlog.h>
+#include <string>
+#include <utility>
 #include <vector>
-
-using std::string;
 
 static torch::Tensor vector_to_tensor(std::vector<float> &data) {
     // Optionally specify size if reshaping is needed
@@ -55,8 +55,8 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
     replay_buffer.add(trajectory);
 }
 
-void self_play(std::shared_ptr<Game> initial_game, string network_path, ReplayBuffer &replay_buffer,
-               int num_games, int thread_count) {
+void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
+               ReplayBuffer &replay_buffer, int num_games, int thread_count) {
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 

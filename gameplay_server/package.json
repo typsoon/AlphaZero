@@ -12,16 +12,28 @@
     "build:tests": "tsc -p tsconfig.tests.json",
     "clean:tests": "find __tests__ -type f \\( -name '*.js' -o -name '*.js.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \\) -delete && rm -rf dist-tests",
     "start": "npm run build && node dist/server.js",
-    "dev": "nodemon server"
+    "dev": "nodemon server",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint ."
   },
   "dependencies": {
-    "fastify": "^5.8.4"
+    "better-sqlite3": "^12.11.1",
+    "fastify": "^5.8.4",
+    "@fastify/websocket": "^11.0.1",
+    "uuid": "^14.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/jest": "^29.5.14",
     "@types/node": "^25.6.0",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9.0.0",
     "fastify-swagger": "^5.1.1",
     "jest": "^29.7.0",
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "prettier": "^3.0.0",
+    "typescript-eslint": "^8.0.0"
   }
 }

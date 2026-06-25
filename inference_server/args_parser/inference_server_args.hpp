@@ -6,7 +6,7 @@
 struct InferenceServerArgs {
     std::string network_path;
     std::string device = "cuda";
-    std::string socket = "/tmp/alphazero.sock";
+    std::string socket = "";
     int mcts_search_depth{800};
     int mcts_batch_size{32};
 };

@@ -12,10 +12,12 @@ int run_server(const InferenceServerArgs &args) {
 
     set_up_and_run_server<ModelWrapper, SchemaValidator>(
         args.socket,
-        create_connect4_model_wrapper(args.network_path, args.device, args.mcts_search_depth, args.mcts_batch_size),
+        create_connect4_model_wrapper(args.network_path, args.device, args.mcts_search_depth,
+                                      args.mcts_batch_size),
         get_schema_validator(schema_path));
-    spdlog::info("network_path={}\ndevice={}\nsocket={}\nmcts_search_depth={}\nmcts_batch_size={}", args.network_path,
-                 args.device, args.socket, args.mcts_search_depth, args.mcts_batch_size);
+    spdlog::info("network_path={}\ndevice={}\nsocket={}\nmcts_search_depth={}\nmcts_batch_size={}",
+                 args.network_path, args.device, args.socket, args.mcts_search_depth,
+                 args.mcts_batch_size);
     return 0;
 }
 

@@ -168,44 +168,47 @@ def process_puzzle(file_path):
     category = file_path.parent.name
     player = current_player(board)
 
-    if category == "win_in_1":
-        actual = get_win_in_1(board, player)
-        if set(actual) != expected_moves:
-            return (
-                False,
-                f"win_in_1 expected {expected_moves}, got {set(actual)}",
-                actual,
-            )
-    elif category == "forced_win_in_2":
-        actual = get_forced_win_in_2(board, player)
-        if set(actual) != expected_moves:
-            return (
-                False,
-                f"forced_win_in_2 expected {expected_moves}, got {set(actual)}",
-                actual,
-            )
-    elif category == "prevent_enemy_winning_in_1":
-        actual = get_prevent_enemy_winning_in_1(board, player)
-        if actual is None:
-            return False, "Enemy is not threatening a win in 1", None
-        if set(actual) != expected_moves:
-            return (
-                False,
-                f"prevent_enemy_winning_in_1 expected {expected_moves}, got {set(actual)}",
-                actual,
-            )
-    elif category == "prevent_enemy_winning_in_2":
-        actual = get_prevent_enemy_winning_in_2(board, player)
-        if actual is None:
-            return False, "Enemy is not threatening a forced win in 2", None
-        if set(actual) != expected_moves:
-            return (
-                False,
-                f"prevent_enemy_winning_in_2 expected {expected_moves}, got {set(actual)}",
-                actual,
-            )
-    else:
-        return False, f"Unknown category {category}", None
+    match category:
+        case "win_in_1":
+            actual = get_win_in_1(board, player)
+            if set(actual) != expected_moves:
+                return (
+                    False,
+                    f"win_in_1 expected {expected_moves}, got {set(actual)}",
+                    actual,
+                )
+        case "forced_win_in_2":
+            actual = get_forced_win_in_2(board, player)
+            if set(actual) != expected_moves:
+                return (
+                    False,
+                    f"forced_win_in_2 expected {expected_moves}, got {set(actual)}",
+                    actual,
+                )
+        case "prevent_enemy_winning_in_1":
+            actual = get_prevent_enemy_winning_in_1(board, player)
+            if actual is None:
+                return False, "Enemy is not threatening a win in 1", None
+            if set(actual) != expected_moves:
+                return (
+                    False,
+                    f"prevent_enemy_winning_in_1 expected {expected_moves}, got {set(actual)}",
+                    actual,
+                )
+        case "prevent_enemy_winning_in_2":
+            actual = get_prevent_enemy_winning_in_2(board, player)
+            if actual is None:
+                return False, "Enemy is not threatening a forced win in 2", None
+            if set(actual) != expected_moves:
+                return (
+                    False,
+                    f"prevent_enemy_winning_in_2 expected {expected_moves}, got {set(actual)}",
+                    actual,
+                )
+        case "positional_puzzles":
+            return True, "OK", None
+        case _:
+            return False, f"Unknown category {category}", None
 
     return True, "OK", None
 

@@ -98,7 +98,7 @@ TEST(ArgsParserTestGroup, DefaultValues) {
     CHECK_TRUE(result);
     CHECK_EQUAL("model.pt", args.network_path);
     CHECK_EQUAL("cuda", args.device);
-    CHECK_EQUAL("/tmp/alphazero.sock", args.socket);
+    CHECK_TRUE(args.socket.find("/tmp/alphazero-inference-AZ123/model/") == 0);
     CHECK_EQUAL(800, args.mcts_search_depth);
 }
 
@@ -126,7 +126,9 @@ TEST(ArgsParserTestGroup, InvalidDepth) {
 
 int main(int ac, char **av) {
     MemoryLeakWarningPlugin::turnOffNewDeleteOverloads();
-    // TODO: Explain what was the problem with that
+    // The CppUTest MemoryLeakWarningPlugin sometimes reports false positives with
+    // third-party libraries like spdlog or torch that use lazy static allocations.
+    // We disable it here to avoid spurious memory leak test failures.
     TestRegistry::getCurrentRegistry()->removePluginByName("MemoryLeakWarningPlugin");
     return CommandLineTestRunner::RunAllTests(ac, av);
 }

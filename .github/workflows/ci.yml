@@ -63,7 +63,7 @@ jobs:
     - name: Install System Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ccache fd-find
+        sudo apt-get install -y ccache fd-find clang-tidy
 
     - name: Cache ccache
       uses: actions/cache@v5
@@ -84,17 +84,20 @@ jobs:
         cd build
         make -j$(nproc)
 
-    - name: Format Checks (C++ & Python)
+    - name: Format Checks (C++ & Python & TS)
       run: |
         doit check_cpp_format
         doit check_cmake_format
         doit check_cmake_lint
         doit check_python_format
         doit check_format_connect4_puzzles
+        doit check_ts_format
 
-    - name: Python Lint Check
+    - name: Lint Checks (C++, Python & TS)
       run: |
+        doit check_cpp_lint
         doit check_python_lint
+        doit check_ts_lint
 
     - name: Set up Node.js
       uses: actions/setup-node@v6

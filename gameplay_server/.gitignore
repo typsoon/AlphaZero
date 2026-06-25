@@ -6,4 +6,8 @@ build/
 *.js.map
 *.d.ts
 *.d.ts.map
+!eslint.config.js
 compile_commands.json
+*.db
+*.db-shm
+*.db-wal
