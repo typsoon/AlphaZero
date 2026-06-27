@@ -60,38 +60,18 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
-    auto game = initial_game->clone();
-
     auto inferer_factory = NetworkInfererFactory(network_path, device);
     MCTSFactory mcts_factory(inferer_factory);
 
-    std::atomic<int> games_played{0};
     std::atomic<int> games_finished{0};
 
-    auto worker = [&]() {
-        while (true) {
-            int current = games_played.fetch_add(1);
-            if (current >= num_games)
-                break;
+#pragma omp parallel for schedule(dynamic) num_threads(thread_count)
+    for (int i = 0; i < num_games; i++) { // NOLINT
+        auto mcts = mcts_factory.get_mcts();
+        play_game(initial_game->clone(), std::move(mcts), replay_buffer);
 
-            auto mcts = mcts_factory.get_mcts();
-            play_game(game->clone(), std::move(mcts), replay_buffer);
-            {
-                spdlog::info("Games played: {}/{}", ++games_finished, num_games);
-            }
-        }
-    };
+        auto current_finished = ++games_finished;
 
-    // worker();
-
-    std::vector<std::thread> threads;
-    for (int i = 1; i < thread_count; ++i) {
-        threads.emplace_back(worker);
-    }
-
-    worker();
-
-    for (auto &t : threads) {
-        t.join();
+        spdlog::info("Games played: {}/{}", current_finished, num_games);
     }
 }

@@ -7,7 +7,7 @@
 
 class MCTSFactory {
   private:
-    InfererFactory &inferer_factory;
+    std::reference_wrapper<InfererFactory> inferer_factory;
     float c_init;
     float c_base;
     float eps;

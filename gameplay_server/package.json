@@ -18,9 +18,9 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@fastify/websocket": "^11.0.1",
     "better-sqlite3": "^12.11.1",
     "fastify": "^5.8.4",
-    "@fastify/websocket": "^11.0.1",
     "uuid": "^14.0.1"
   },
   "devDependencies": {
@@ -32,6 +32,7 @@
     "eslint": "^9.0.0",
     "fastify-swagger": "^5.1.1",
     "jest": "^29.7.0",
+    "jiti": "^2.7.0",
     "nodemon": "^3.1.14",
     "prettier": "^3.0.0",
     "typescript-eslint": "^8.0.0"

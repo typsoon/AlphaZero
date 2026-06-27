@@ -187,13 +187,14 @@ export default async function gameRoutes(server: FastifyInstance) {
             deleteGame(id);
           }
         }
-      } catch (e: any) {
-        if (e.code === 'ENOENT') {
+      } catch (e: unknown) {
+        const err = e as { code?: string; message?: string };
+        if (err.code === 'ENOENT') {
           server.log.warn(
             `Inference server socket not found at ${resolvedAgent}. Ensure the inference server is running.`,
           );
         } else {
-          server.log.error(`AI turn failed: ${e.message}`);
+          server.log.error(`AI turn failed: ${err.message || String(e)}`);
         }
       }
     }

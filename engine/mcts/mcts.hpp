@@ -36,7 +36,7 @@ class MCTS {
 
     std::vector<float> get_policy_from_logits(torch::Tensor policy_logits,
                                               const std::vector<int> &legal_actions,
-                                              bool dirichletNoise = false);
+                                              bool dirichletNoise = false) const;
 
     static std::vector<float> sample_dirichlet(const std::vector<float> &alpha);
 };

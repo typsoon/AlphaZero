@@ -67,11 +67,8 @@ endif()
 
 add_executable(benchmark_batch_size benchmark_batch_size.cpp)
 target_link_libraries(
-  benchmark_batch_size
-  PRIVATE game
-          inference
-          spdlog::spdlog
-          "${TORCH_LIBRARIES}")
+  benchmark_batch_size PRIVATE game inference spdlog::spdlog
+                               "${TORCH_LIBRARIES}")
 target_include_directories(benchmark_batch_size PRIVATE ${TORCH_INCLUDE_DIRS})
 if(CUDAToolkit_FOUND)
   target_link_libraries(benchmark_batch_size PRIVATE CUDA::cupti)

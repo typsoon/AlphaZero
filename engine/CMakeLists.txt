@@ -15,6 +15,9 @@ add_subdirectory(game)
 add_subdirectory(mcts)
 add_subdirectory(inference)
 add_subdirectory(utils)
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+    add_subdirectory(profiling)
+endif()
 
 add_library(engine INTERFACE)
 target_link_libraries(engine INTERFACE game inference mcts utils spdlog::spdlog

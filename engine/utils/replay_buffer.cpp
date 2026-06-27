@@ -2,13 +2,13 @@
 #include <algorithm>
 #include <numeric>
 
-Transition::Transition(const torch::Tensor &s, const torch::Tensor &p, float r)
-    : state(s), policy(p), reward(r) {}
+Transition::Transition(torch::Tensor s, torch::Tensor p, float r)
+    : state(std::move(s)), policy(std::move(p)), reward(r) {}
 
-ReplayBuffer::ReplayBuffer(size_t capacity)
+ReplayBuffer::ReplayBuffer(size_t capacity) // NOLINT
     : capacity(capacity), buffer(capacity), rng(std::random_device{}()) {}
 
-void ReplayBuffer::add(const std::vector<Transition> &transitions) {
+void ReplayBuffer::add(const std::vector<Transition> &transitions) { // NOLINT
     std::unique_lock<std::shared_mutex> lock(rw_mutex);
     for (const auto &transition : transitions) {
         buffer[ptr] = transition;
@@ -29,7 +29,8 @@ ReplayBuffer::sample(size_t batch_size) const {
     std::shared_lock<std::shared_mutex> lock(rw_mutex);
     batch_size = std::min(batch_size, size);
 
-    std::vector<torch::Tensor> states, policies;
+    std::vector<torch::Tensor> states;
+    std::vector<torch::Tensor> policies;
     std::vector<float> rewards;
 
     std::vector<size_t> indices(size);

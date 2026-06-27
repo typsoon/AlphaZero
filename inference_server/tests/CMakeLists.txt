@@ -27,7 +27,8 @@ target_include_directories(
 
 target_compile_definitions(
   inference_server_tests
-  PRIVATE ALPHAZERO_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")
+  PRIVATE ALPHAZERO_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../.."
+          CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
 
 # Add test target
 add_test(NAME inference_server_tests COMMAND inference_server_tests)

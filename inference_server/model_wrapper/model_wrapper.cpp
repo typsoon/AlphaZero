@@ -7,7 +7,6 @@
 #include <spdlog/spdlog.h>
 #include <torch/torch.h>
 #include <utility>
-#include <vector>
 
 namespace {
 
@@ -27,19 +26,15 @@ class Connect4ModelWrapper final : public ModelWrapper {
         const auto payload_json = nlohmann::json::parse(request_payload);
         const auto &board_json = payload_json.at("board");
 
-        std::vector<std::vector<int>> board;
-        board.reserve(board_json.size());
-        for (const auto &row_json : board_json) {
-            std::vector<int> row;
-            row.reserve(row_json.size());
-            for (const auto &cell_json : row_json) {
-                int value = cell_json.get<int>();
+        Connect4::board_t board = {};
+        for (int r = 0; r < Connect4::ROWS; r++) {
+            for (int c = 0; c < Connect4::COLS; c++) {
+                int value = board_json[r][c].get<int>();
                 if (value == 2) {
                     value = -1;
                 }
-                row.push_back(value);
+                board[r][c] = value; // NOLINT
             }
-            board.push_back(std::move(row));
         }
 
         Connect4 game(board, device);

@@ -28,23 +28,24 @@ PYBIND11_MODULE(engine_bind, m) {
             .def("get_size", &ReplayBuffer::get_size);
 
         py::class_<Game, std::shared_ptr<Game>>(m, "Game")
-            .def("get_board_state", &Game::get_board_state)
             .def("get_legal_actions", &Game::get_legal_actions)
             .def("step", &Game::step)
             .def("reset", &Game::reset)
             .def_property_readonly("is_terminal", &Game::is_terminal)
             .def_property_readonly("current_player", &Game::get_current_player);
 
-        py::class_<Connect4, Game, std::shared_ptr<Connect4>>(m, "Connect4")
+        py::class_<Game2D<6, 7>, Game, std::shared_ptr<Game2D<6, 7>>>(m, "Game2D_6_7")
+            .def("get_board_state", &Game2D<6, 7>::get_board_state)
+            .def_readonly_static("ROWS", &Game2D<6, 7>::ROWS)
+            .def_readonly_static("COLS", &Game2D<6, 7>::COLS);
+
+        py::class_<Connect4, Game2D<6, 7>, std::shared_ptr<Connect4>>(m, "Connect4")
             .def(py::init<torch::Device>(), py::arg("device") = torch::Device("cpu"))
             .def(py::init<const std::vector<std::vector<int>> &, torch::Device>(),
                  py::arg("initial_board"), py::arg("device") = torch::Device("cpu"))
-            .def_readonly_static("ROWS", &Connect4::ROWS)
-            .def_readonly_static("COLS", &Connect4::COLS)
             .def_readonly_static("action_dim", &Connect4::action_dim)
             .def_property_readonly_static("state_dim", [](py::object /* self */) {
-                return py::make_tuple(1, 6,
-                                      7); // or use Connect4::state_dim
+                return Connect4::state_dim; // or use Connect4::state_dim
             });
         // .def("reset", &Connect4::reset)
         // .def("getActionSize", &Connect4::getActionSize)

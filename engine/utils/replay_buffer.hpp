@@ -1,7 +1,6 @@
 #ifndef REPLAY_BUFFER_HPP
 #define REPLAY_BUFFER_HPP
 
-#include <mutex>
 #include <random>
 #include <shared_mutex>
 #include <torch/torch.h>
@@ -13,7 +12,7 @@ struct Transition {
     torch::Tensor policy;
     float reward;
 
-    Transition(const torch::Tensor &s = {}, const torch::Tensor &p = {}, float r = 0);
+    Transition(torch::Tensor s = {}, torch::Tensor p = {}, float r = 0);
 };
 
 class ReplayBuffer {

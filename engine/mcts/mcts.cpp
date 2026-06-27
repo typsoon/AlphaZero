@@ -39,7 +39,7 @@ struct MCTS::Node {
 };
 
 void MCTS::Node::backpropagate(Node *node, float value, bool vloss) {
-    while (node) {
+    while (node != nullptr) {
         node->visits++;
         node->value += value;
         if (vloss)
@@ -49,24 +49,24 @@ void MCTS::Node::backpropagate(Node *node, float value, bool vloss) {
     }
 }
 
-MCTS::Node::Node(std::unique_ptr<Game> state, float prior_value, Node *parent_node)
+MCTS::Node::Node(std::unique_ptr<Game> state, float prior_value, Node *parent_node) // NOLINT
     : game_state(std::move(state)), prior(prior_value), parent(parent_node) {
     children.resize(game_state->getActionSize());
 }
 
 float MCTS::Node::Q() const {
     // return visits > 0 ? value / visits : 0.0f;
-    float adj_value = value + virtual_loss_count * VL;
+    float adj_value = value + (virtual_loss_count * VL);
     int adj_visits = visits + virtual_loss_count;
     return adj_visits > 0 ? adj_value / adj_visits : 0.0f;
 }
 
 float MCTS::Node::UCB(float exploration_weight) const {
-    if (!parent)
+    if (parent == nullptr)
         return 0.0f;
-    return -Q() + exploration_weight * prior *
-                      std::sqrt(parent->visits + parent->virtual_loss_count + 1) /
-                      (1 + visits + virtual_loss_count);
+    return -Q() + (exploration_weight * prior *
+                   std::sqrt(parent->visits + parent->virtual_loss_count + 1) /
+                   (1 + visits + virtual_loss_count));
 }
 
 void MCTS::Node::expand(const std::vector<float> &policy) {
@@ -89,13 +89,14 @@ bool MCTS::Node::is_expanded() const {
     return expanded;
 }
 
-std::pair<int, MCTS::Node *> MCTS::Node::select_child(float exploration_weight) const {
+std::pair<int, MCTS::Node *> MCTS::Node::select_child(float exploration_weight) const { // NOLINT
     int best_index = -1;
     float best_value = -std::numeric_limits<float>::infinity();
     for (int i = 0; i < children.size(); i++) {
         if (!children[i])
             continue;
-        float ucb_value = children[i]->UCB(exploration_weight);
+        float ucb_value = 0.0f;
+        ucb_value = children[i]->UCB(exploration_weight);
         if (ucb_value > best_value) {
             best_value = ucb_value;
             best_index = i;
@@ -104,11 +105,11 @@ std::pair<int, MCTS::Node *> MCTS::Node::select_child(float exploration_weight) 
     return {best_index, children[best_index].get()};
 }
 
-MCTS::MCTS(unique_ptr<Inferer> &&network, float c_init, float c_base, float eps, float alpha)
-    : network(std::move(network)), c_init(c_init), c_base(c_base), eps(eps), alpha(alpha),
+MCTS::MCTS(unique_ptr<Inferer> &&network_ptr, float c_init, float c_base, float eps, float alpha) // NOLINT
+    : network(std::move(network_ptr)), c_init(c_init), c_base(c_base), eps(eps), alpha(alpha),
       device(this->network->device) {}
 
-MCTS::MCTS(std::string network_path, torch::Device device, float c_init, float c_base, float eps,
+MCTS::MCTS(std::string network_path, torch::Device device, float c_init, float c_base, float eps, // NOLINT
            float alpha)
     : network([&device, &network_path]() {
           auto network_inferer_factory = NetworkInfererFactory(network_path, device);
@@ -116,19 +117,32 @@ MCTS::MCTS(std::string network_path, torch::Device device, float c_init, float c
       }()),
       c_init(c_init), c_base(c_base), eps(eps), alpha(alpha), device(this->network->device) {}
 
-void MCTS::evaluate_batch(std::vector<Node *> &leaves) {
+void MCTS::evaluate_batch(std::vector<Node *> &leaves) { // NOLINT
     if (leaves.empty())
         return;
 
     torch::NoGradGuard no_grad;
-    std::vector<GameState> inputs;
-    inputs.reserve(leaves.size());
 
-    for (auto &leaf : leaves) {
-        inputs.emplace_back(leaf->game_state->get_canonical_state());
+    // Determine shape from the first leaf
+    auto sample_tensor = static_cast<torch::Tensor>(leaves[0]->game_state->get_canonical_state());
+    auto shape = sample_tensor.sizes().vec();
+    shape.insert(shape.begin(), leaves.size()); // Insert batch dimension
+
+    // Allocate pinned memory
+    auto options = torch::TensorOptions().dtype(torch::kFloat32).pinned_memory(true);
+    torch::Tensor batched_states = torch::empty(shape, options);
+    auto *batched_data = batched_states.data_ptr<float>();
+
+    int state_size = 1;
+    for (size_t i = 1; i < shape.size(); ++i) {
+        state_size *= shape[i];
     }
 
-    auto outputs = network->infer(inputs);
+    for (size_t i = 0; i < leaves.size(); ++i) {
+        leaves[i]->game_state->write_canonical_state(batched_data + (i * state_size));
+    }
+
+    auto outputs = network->infer(batched_states);
 
     for (size_t i = 0; i < leaves.size(); ++i) {
         Node *node = leaves[i];
@@ -147,14 +161,14 @@ void MCTS::evaluate_batch(std::vector<Node *> &leaves) {
     }
 }
 
-std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simulations,
+std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simulations, // NOLINT
                                                   int batch_size) {
     auto root = game.clone();
-    auto inference_res = network->infer({root->get_canonical_state()});
+    auto inference_res = network->infer(std::vector<GameState>{root->get_canonical_state()});
     float root_value = inference_res.front().second;
     auto p_init =
         get_policy_from_logits(inference_res.front().first, root->get_legal_actions(), true);
-    Node root_node = Node(std::move(root));
+    auto root_node = Node(std::move(root));
     root_node.expand(p_init);
 
     int simulations_done = 0;
@@ -202,7 +216,7 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
 
 std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,
                                                 const std::vector<int> &legal_actions,
-                                                bool dirichletNoise) {
+                                                bool dirichletNoise) const {
     policy_logits = policy_logits.squeeze(0); // [A]
     int A = policy_logits.size(0);
 
@@ -225,7 +239,7 @@ std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,
         }
 
         auto noise_t = torch::tensor(full_noise, policy.options());
-        policy = (1.0f - eps) * policy + eps * noise_t;
+        policy = ((1.0f - eps) * policy) + (eps * noise_t);
     }
 
     policy = policy.cpu();
@@ -234,7 +248,7 @@ std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,
 
     return policy_vec;
 }
-std::vector<float> MCTS::sample_dirichlet(const std::vector<float> &alpha) {
+std::vector<float> MCTS::sample_dirichlet(const std::vector<float> &alpha) { // NOLINT
     static thread_local std::mt19937 gen{std::random_device{}()};
     std::vector<float> x(alpha.size());
     float sum = 0.0f;

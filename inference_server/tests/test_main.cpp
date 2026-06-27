@@ -1,3 +1,4 @@
+#include "../../engine/game/connect4.hpp"
 #include "../args_parser/inference_server_args.hpp"
 #include "../model_wrapper/model_wrapper.hpp"
 #include "../schema_validator/schema_validator.hpp"
@@ -121,14 +122,39 @@ TEST(ArgsParserTestGroup, InvalidDepth) {
     CHECK_FALSE(result);
 }
 
+TEST_GROUP(Connect4StaticTests){};
+
+TEST(Connect4StaticTests, HasWinHorizontal) {
+    std::vector<std::vector<int>> board(6, std::vector<int>(7, 0));
+    board[0][0] = 1;
+    board[0][1] = 1;
+    board[0][2] = 1;
+    board[0][3] = 1;
+    CHECK_TRUE(Connect4::hasWin(board, 1));
+    CHECK_FALSE(Connect4::hasWin(board, -1));
+}
+
+TEST(Connect4StaticTests, IsBoardFull) {
+    std::vector<std::vector<int>> board(6, std::vector<int>(7, 1));
+    CHECK_TRUE(Connect4::isBoardFull(board));
+    board[0][3] = 0;
+    CHECK_FALSE(Connect4::isBoardFull(board));
+}
+
 #include <CppUTest/MemoryLeakWarningPlugin.h>
 #include <CppUTest/TestRegistry.h>
 
+#include <cstdlib>
+
 int main(int ac, char **av) {
     MemoryLeakWarningPlugin::turnOffNewDeleteOverloads();
-    // The CppUTest MemoryLeakWarningPlugin sometimes reports false positives with
-    // third-party libraries like spdlog or torch that use lazy static allocations.
-    // We disable it here to avoid spurious memory leak test failures.
-    TestRegistry::getCurrentRegistry()->removePluginByName("MemoryLeakWarningPlugin");
-    return CommandLineTestRunner::RunAllTests(ac, av);
+
+    CommandLineTestRunner runner(ac, av, TestRegistry::getCurrentRegistry());
+
+    // The CommandLineTestRunner constructor installs the MemoryLeakPlugin automatically.
+    // We remove it here to avoid spurious memory leak test failures with libtorch.
+    TestRegistry::getCurrentRegistry()->removePluginByName(DEF_PLUGIN_MEM_LEAK);
+
+    int res = runner.runAllTestsMain();
+    std::_Exit(res);
 }

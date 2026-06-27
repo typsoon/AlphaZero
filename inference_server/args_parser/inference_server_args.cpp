@@ -1,7 +1,6 @@
 #include "inference_server_args.hpp"
 
 #include <filesystem>
-#include <iomanip>
 #include <iostream>
 #include <random>
 #include <sstream>
