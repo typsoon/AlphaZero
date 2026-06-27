@@ -3,8 +3,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from typing import Any, Callable, Type
-from torch.utils.data import TensorDataset, DataLoader
-
 
 from .network import AlphaZeroNetwork
 
@@ -12,7 +10,6 @@ import sys
 from tqdm import tqdm as base_tqdm
 from tqdm.notebook import tqdm as notebook_tqdm
 
-from .pybind.self_play_bind import self_play  # pyright: ignore
 import logging
 from .pybind.engine_bind import Game, ReplayBuffer  # pyright: ignore
 
@@ -34,6 +31,11 @@ class AlphaZeroTrainer:
         self.optimizer = optimizer
         self.minibatch_size = minibatch_size
         self.device = device
+
+        self.scaler = torch.amp.GradScaler("cuda", enabled=(self.device.type == "cuda"))
+        if self.device.type == "cuda":
+            torch.backends.cudnn.benchmark = True
+
         assert (
             torch.device(device).type == next(model.parameters()).device.type
             # and device.index == next(model.parameters()).device.index
@@ -43,10 +45,8 @@ class AlphaZeroTrainer:
 
     def train(self, batch_size=64, train_steps=1000):
         self.model.train()
-        # torch.autograd.detect_anomaly()
         accum_steps = self.minibatch_size // batch_size
         assert self.minibatch_size % batch_size == 0
-        # print(self.replay_buffer.size, self.minibatch_size)
 
         progress_bar: Any = range(train_steps)
 
@@ -61,16 +61,6 @@ class AlphaZeroTrainer:
                 self.minibatch_size
             )
 
-            minibatch = TensorDataset(
-                states.to(self.device),
-                target_policies.to(self.device),
-                target_values.to(self.device),
-            )
-            dataloader = DataLoader(minibatch, batch_size=batch_size)
-
-            # print(states.shape, target_policies.shape, target_values.shape)
-            # print(states, target_policies, target_values)
-            # print(target_policies, target_values)
             if states.shape[0] < self.minibatch_size:
                 # Not enough data yet — skip training this step.
                 logging.info(
@@ -78,30 +68,34 @@ class AlphaZeroTrainer:
                 )
                 return
 
-            debug_counter = 0
-            for s_batch, pi_batch, v_batch in dataloader:
-                assert s_batch.shape[0] != 0, (
-                    f"s_batch shouldn't be empty, {debug_counter}"
-                )
+            states = states.to(self.device, non_blocking=True)
+            target_policies = target_policies.to(self.device, non_blocking=True)
+            target_values = target_values.to(self.device, non_blocking=True)
 
-                p_logits, v_preds = self.model(s_batch)
-                v_preds = v_preds.squeeze(-1)
+            for i in range(0, self.minibatch_size, batch_size):
+                s_batch = states[i : i + batch_size]
+                pi_batch = target_policies[i : i + batch_size]
+                v_batch = target_values[i : i + batch_size]
 
-                logp = F.log_softmax(p_logits, dim=1)
+                with torch.autocast(
+                    device_type=self.device.type, enabled=(self.device.type == "cuda")
+                ):
+                    p_logits, v_preds = self.model(s_batch)
+                    v_preds = v_preds.squeeze(-1)
 
-                # Cross-entropy: -sum(pi * log_softmax(p)), matching AlphaZero paper.
-                # Only average over entries where pi > 0 to avoid distorting targets.
-                policy_loss = -(pi_batch * logp).sum(dim=1).mean()
-                value_loss = F.mse_loss(v_preds, v_batch)
+                    # Fused cross-entropy is much faster and more memory-efficient
+                    # than manual log_softmax + multiply + sum
+                    policy_loss = F.cross_entropy(p_logits, pi_batch)
+                    value_loss = F.mse_loss(v_preds, v_batch)
 
-                loss = policy_loss + value_loss
-                loss /= accum_steps
-                loss.backward()
+                    loss = policy_loss + value_loss
+                    loss /= accum_steps
 
-                debug_counter += 1
+                self.scaler.scale(loss).backward()
 
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad(set_to_none=True)
 
             if __debug__:
                 if step % 100 == 0:
@@ -123,7 +117,7 @@ def self_play_and_train_loop(
     checkpoint_manager: CheckpointManager,
     network_type: Type[AlphaZeroNetwork],
     network_device: torch.device,
-    game_type: Type[Game],
+    game_data: tuple[Type[Game], Callable],
     trainer_factory: Callable[
         [nn.Module, torch.device, ReplayBuffer, int], AlphaZeroTrainer
     ],
@@ -137,6 +131,7 @@ def self_play_and_train_loop(
 ):
     # We MUST pass network_device here so the C++ clone() inherits the same device.
     # Otherwise, it defaults to CPU, causing a CUDA/CPU mismatch during batched inference.
+    game_type, self_play_method = game_data
     game = game_type(network_device)
     replay_buffer = ReplayBuffer(replay_buffer_size)
 
@@ -145,7 +140,7 @@ def self_play_and_train_loop(
     )
 
     for _ in range(loop_iterations):
-        self_play(
+        self_play_method(
             game,
             checkpoint_manager.get_latest_scripted_checkpoint_file(),
             replay_buffer,

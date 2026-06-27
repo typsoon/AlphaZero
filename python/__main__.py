@@ -1,5 +1,6 @@
 import torch
 from .pybind.engine_bind import Connect4  # pyright: ignore
+from .pybind.self_play_bind import self_play_connect4  # pyright: ignore
 from .checkpoint_manager import CheckpointManager
 from .injectors import (
     get_network,
@@ -119,7 +120,7 @@ if __name__ == "__main__":
         checkpoint_manager=manager,
         network_type=AlphaZeroNetwork,
         network_device=device,
-        game_type=Connect4,
+        game_data=(Connect4, self_play_connect4),
         trainer_factory=get_trainer,
         loop_iterations=args.loop_iterations,
         games_in_each_iteration=args.games_in_each_iteration,

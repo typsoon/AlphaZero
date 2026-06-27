@@ -31,6 +31,8 @@ def get_trainer(
     replay_buffer: ReplayBuffer,
     minibatch_size=4096,
 ) -> AlphaZeroTrainer:
-    optimizer = Adam(model.parameters(), weight_decay=1e-4)
+    optimizer = Adam(
+        model.parameters(), weight_decay=1e-4, fused=(device.type == "cuda")
+    )
 
     return AlphaZeroTrainer(model, replay_buffer, optimizer, device, minibatch_size)
