@@ -35,9 +35,10 @@ class Connect4 : public Game2D<6, 7> {
     bool is_terminal() const override;
     float reward() const override;
     std::vector<std::vector<int>> get_board_state() const override;
-    GameState get_canonical_state() const override;
+    std::shared_ptr<const GameState> get_canonical_state() const override;
+    std::vector<int64_t> get_state_shape() const override;
     void write_canonical_state(float *out_buffer) const override;
-    std::unique_ptr<Game> clone() const override;
+    std::shared_ptr<Game> clone() const override;
     void render() const override;
 
   private:

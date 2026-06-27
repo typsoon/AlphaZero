@@ -1,4 +1,5 @@
 #include "../../engine/game/connect4.hpp"
+#include "../../engine/inference/basic_inferer.hpp"
 #include "../args_parser/inference_server_args.hpp"
 #include "../model_wrapper/model_wrapper.hpp"
 #include "../schema_validator/schema_validator.hpp"
@@ -77,6 +78,35 @@ TEST(ModelWrapperTestGroup, ValidInferenceReturnsJSON) {
     CHECK_EQUAL(7, result_json["policy"].size());
 }
 
+TEST(ModelWrapperTestGroup, MixedInferenceDevicesDontCrash) {
+    if (!torch::cuda::is_available()) {
+        return; // Can't test if no CUDA
+    }
+    std::string model_path =
+        std::string(ALPHAZERO_REPO_ROOT) + "/inference_server/tests/payloads/dummy_model.pt";
+    auto device = torch::Device("cuda");
+
+    auto factory = NetworkInfererFactory(model_path, device, 2, 1000);
+    auto inferer = factory.get_inferer();
+
+    auto game = std::make_shared<Connect4>();
+    auto canonical = game->get_canonical_state();
+
+    std::thread t1([&]() {
+        std::vector<const GameState *> states = {canonical.get()};
+        inferer->infer(states);
+    });
+
+    std::thread t2([&]() {
+        std::vector<const GameState *> states = {canonical.get()};
+        inferer->infer(states);
+    });
+
+    t1.join();
+    t2.join();
+    CHECK_TRUE(true);
+}
+
 TEST(ModelWrapperTestGroup, InvalidModelPathThrows) {
     std::string bad_path = "non_existent.pt";
     bool thrown = false;
@@ -139,6 +169,30 @@ TEST(Connect4StaticTests, IsBoardFull) {
     CHECK_TRUE(Connect4::isBoardFull(board));
     board[0][3] = 0;
     CHECK_FALSE(Connect4::isBoardFull(board));
+}
+
+TEST(Connect4StaticTests, ClonePreservesState) {
+    std::vector<std::vector<int>> board(6, std::vector<int>(7, 0));
+    board[5][0] = 1; // player 1 places piece
+    Connect4 game(board);
+
+    game.step(1); // player -1 places piece in column 1
+
+    auto cloned_game = game.clone();
+
+    // Check board state matches
+    auto state1 = game.get_board_state();
+    auto state2 = dynamic_cast<Connect4 *>(cloned_game.get())->get_board_state();
+    for (int r = 0; r < 6; r++) {
+        for (int c = 0; c < 7; c++) {
+            CHECK_EQUAL(state1[r][c], state2[r][c]);
+        }
+    }
+
+    // Check internal state variables
+    CHECK_EQUAL(game.get_current_player(), cloned_game->get_current_player());
+    CHECK_EQUAL(game.is_terminal(), cloned_game->is_terminal());
+    CHECK_EQUAL(game.reward(), cloned_game->reward());
 }
 
 #include <CppUTest/MemoryLeakWarningPlugin.h>

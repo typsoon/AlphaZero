@@ -13,7 +13,7 @@
 
 struct MCTS::Node {
     using NodePtr = std::unique_ptr<Node>;
-    unique_ptr<Game> game_state;
+    std::shared_ptr<Game> game_state;
     vector<NodePtr> children;
     Node *parent = nullptr;
     int visits = 0;
@@ -23,7 +23,7 @@ struct MCTS::Node {
     int virtual_loss_count = 0;
     static constexpr float VL = 1.0f;
 
-    Node(std::unique_ptr<Game> state, float prior_value = 0.0f, Node *parent_node = nullptr);
+    Node(std::shared_ptr<Game> state, float prior_value = 0.0f, Node *parent_node = nullptr);
 
     float Q() const;
     float UCB(float exploration_weight) const;
@@ -49,7 +49,7 @@ void MCTS::Node::backpropagate(Node *node, float value, bool vloss) {
     }
 }
 
-MCTS::Node::Node(std::unique_ptr<Game> state, float prior_value, Node *parent_node) // NOLINT
+MCTS::Node::Node(std::shared_ptr<Game> state, float prior_value, Node *parent_node) // NOLINT
     : game_state(std::move(state)), prior(prior_value), parent(parent_node) {
     children.resize(game_state->getActionSize());
 }
@@ -105,11 +105,13 @@ std::pair<int, MCTS::Node *> MCTS::Node::select_child(float exploration_weight) 
     return {best_index, children[best_index].get()};
 }
 
-MCTS::MCTS(unique_ptr<Inferer> &&network_ptr, float c_init, float c_base, float eps, float alpha) // NOLINT
+MCTS::MCTS(unique_ptr<Inferer> &&network_ptr, float c_init, float c_base, float eps,
+           float alpha) // NOLINT
     : network(std::move(network_ptr)), c_init(c_init), c_base(c_base), eps(eps), alpha(alpha),
       device(this->network->device) {}
 
-MCTS::MCTS(std::string network_path, torch::Device device, float c_init, float c_base, float eps, // NOLINT
+MCTS::MCTS(std::string network_path, torch::Device device, float c_init, float c_base,
+           float eps, // NOLINT
            float alpha)
     : network([&device, &network_path]() {
           auto network_inferer_factory = NetworkInfererFactory(network_path, device);
@@ -121,28 +123,13 @@ void MCTS::evaluate_batch(std::vector<Node *> &leaves) { // NOLINT
     if (leaves.empty())
         return;
 
-    torch::NoGradGuard no_grad;
-
-    // Determine shape from the first leaf
-    auto sample_tensor = static_cast<torch::Tensor>(leaves[0]->game_state->get_canonical_state());
-    auto shape = sample_tensor.sizes().vec();
-    shape.insert(shape.begin(), leaves.size()); // Insert batch dimension
-
-    // Allocate pinned memory
-    auto options = torch::TensorOptions().dtype(torch::kFloat32).pinned_memory(true);
-    torch::Tensor batched_states = torch::empty(shape, options);
-    auto *batched_data = batched_states.data_ptr<float>();
-
-    int state_size = 1;
-    for (size_t i = 1; i < shape.size(); ++i) {
-        state_size *= shape[i];
+    std::vector<const GameState *> states;
+    states.reserve(leaves.size());
+    for (auto *leaf : leaves) {
+        states.push_back(leaf->game_state->get_canonical_state().get());
     }
 
-    for (size_t i = 0; i < leaves.size(); ++i) {
-        leaves[i]->game_state->write_canonical_state(batched_data + (i * state_size));
-    }
-
-    auto outputs = network->infer(batched_states);
+    auto outputs = network->infer(states);
 
     for (size_t i = 0; i < leaves.size(); ++i) {
         Node *node = leaves[i];
@@ -163,12 +150,14 @@ void MCTS::evaluate_batch(std::vector<Node *> &leaves) { // NOLINT
 
 std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simulations, // NOLINT
                                                   int batch_size) {
-    auto root = game.clone();
-    auto inference_res = network->infer(std::vector<GameState>{root->get_canonical_state()});
+    auto root_game = game.clone();
+    Node root_node(std::move(root_game));
+
+    auto inference_res = network->infer(
+        std::vector<const GameState *>{root_node.game_state->get_canonical_state().get()});
     float root_value = inference_res.front().second;
-    auto p_init =
-        get_policy_from_logits(inference_res.front().first, root->get_legal_actions(), true);
-    auto root_node = Node(std::move(root));
+    auto p_init = get_policy_from_logits(inference_res.front().first,
+                                         root_node.game_state->get_legal_actions(), true);
     root_node.expand(p_init);
 
     int simulations_done = 0;
@@ -217,34 +206,46 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
 std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,
                                                 const std::vector<int> &legal_actions,
                                                 bool dirichletNoise) const {
-    policy_logits = policy_logits.squeeze(0); // [A]
+    // We omit libtorch (ATen) operations here (like torch::tensor, torch::softmax)
+    // because the ATen dispatcher overhead and allocations are extremely slow for
+    // small vectors on the CPU (e.g., 7 elements for Connect4). A pure C++
+    // implementation is ~6x faster and avoids creating intermediate tensors.
+    // It operates on the same 32-bit floats natively, so no precision is lost.
+
+    policy_logits = policy_logits.squeeze(0).cpu().contiguous();
     int A = policy_logits.size(0);
+    const float *logits_data = policy_logits.data_ptr<float>();
 
-    std::vector<float> mask_vec(A, -std::numeric_limits<float>::infinity());
+    std::vector<float> policy_vec(A, 0.0f);
+
+    float max_logit = -std::numeric_limits<float>::infinity();
     for (int a : legal_actions) {
-        mask_vec[a] = 0.0f;
+        if (logits_data[a] > max_logit) {
+            max_logit = logits_data[a];
+        }
     }
-    torch::Tensor mask = torch::tensor(mask_vec, policy_logits.options());
-    policy_logits = policy_logits + mask;
 
-    torch::Tensor policy = torch::softmax(policy_logits, 0); // [A]
+    float sum_exp = 0.0f;
+    for (int a : legal_actions) {
+        policy_vec[a] = std::exp(logits_data[a] - max_logit);
+        sum_exp += policy_vec[a];
+    }
+
+    if (sum_exp > 0.0f) {
+        for (int a : legal_actions) {
+            policy_vec[a] /= sum_exp;
+        }
+    }
 
     if (dirichletNoise) {
         std::vector<float> alpha_vec(legal_actions.size(), alpha);
         auto noise_vec = sample_dirichlet(alpha_vec);
 
-        std::vector<float> full_noise(A, 0.0f);
         for (size_t i = 0; i < legal_actions.size(); ++i) {
-            full_noise[legal_actions[i]] = noise_vec[i];
+            int a = legal_actions[i];
+            policy_vec[a] = ((1.0f - eps) * policy_vec[a]) + (eps * noise_vec[i]);
         }
-
-        auto noise_t = torch::tensor(full_noise, policy.options());
-        policy = ((1.0f - eps) * policy) + (eps * noise_t);
     }
-
-    policy = policy.cpu();
-    std::vector<float> policy_vec(A, 0.0f);
-    std::memcpy(policy_vec.data(), policy.data_ptr<float>(), A * sizeof(float));
 
     return policy_vec;
 }

@@ -164,15 +164,12 @@ float Connect4::reward() const {
     return _reward;
 }
 
-GameState Connect4::get_canonical_state() const {
-    torch::Tensor state = torch::empty({1, ROWS, COLS}, torch::kFloat32);
-    write_canonical_state(state.data_ptr<float>());
+std::shared_ptr<const GameState> Connect4::get_canonical_state() const {
+    return shared_from_this();
+}
 
-    if (state.device() != device) {
-        state = state.to(device);
-    }
-
-    return {std::move(state)};
+std::vector<int64_t> Connect4::get_state_shape() const {
+    return {1, ROWS, COLS};
 }
 
 void Connect4::write_canonical_state(float *out_buffer) const {
@@ -184,9 +181,8 @@ void Connect4::write_canonical_state(float *out_buffer) const {
     }
 }
 
-std::unique_ptr<Game> Connect4::clone() const {
-    auto copy = std::make_unique<Connect4>(board, device);
-    return copy;
+std::shared_ptr<Game> Connect4::clone() const {
+    return std::make_shared<Connect4>(*this);
 }
 
 void Connect4::render() const {

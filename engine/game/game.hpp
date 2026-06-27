@@ -8,34 +8,21 @@
 #include <vector>
 
 using torch::Tensor;
-// Abstract base class for game states, enabling hashing and comparison if
-// needed
 class GameState {
-  private:
-    Tensor state_tensor;
-
   public:
-    GameState(Tensor state_tensor) : state_tensor(std::move(state_tensor)) {}
-
-    // const Tensor &get_tensor() const {
-    //     return state_tensor;
-    // };
-
-    operator Tensor() && { return std::move(state_tensor); }
-    // operator Tensor() {
-    //     return state_tensor;
-    // };
-
-    // Equality comparison for hashing or state lookup
-    bool operator==(const GameState &other) const;
+    virtual ~GameState() = default;
+    virtual void write_canonical_state(float *out_buffer) const = 0;
+    virtual std::vector<int64_t> get_state_shape() const = 0;
 };
 
 // Abstract base class for Games
-class Game {
+class Game : public GameState, public std::enable_shared_from_this<Game> {
+  protected:
+    Game(const Game &) = default;
+    Game &operator=(const Game &) = default;
+
   public:
     Game() = default;
-    Game(const Game &) = delete;
-    Game &operator=(const Game &) = delete;
     virtual ~Game() = default;
 
     // Reset game to initial state
@@ -60,13 +47,10 @@ class Game {
     virtual float reward() const = 0;
 
     // Get the canonical representation of the state for neural network input
-    virtual GameState get_canonical_state() const = 0;
-
-    // Write the canonical state directly to a pre-allocated raw memory buffer
-    virtual void write_canonical_state(float *out_buffer) const = 0;
+    virtual std::shared_ptr<const GameState> get_canonical_state() const = 0;
 
     // Creates a deep copy of the current game state
-    virtual std::unique_ptr<Game> clone() const = 0;
+    virtual std::shared_ptr<Game> clone() const = 0;
 
     // Optional: render the current state (e.g., for debugging/visualization)
     virtual void render() const = 0;

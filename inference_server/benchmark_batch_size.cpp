@@ -30,7 +30,9 @@ int main(int argc, char *argv[]) { // NOLINT
     auto infer_method = module.get_method("infer");
 
     Connect4 game_cpu{torch::Device(torch::kCPU)};
-    torch::Tensor state_cpu = std::move(game_cpu.get_canonical_state());
+    auto shape = game_cpu.get_state_shape();
+    torch::Tensor state_cpu = torch::empty(shape, torch::kFloat32);
+    game_cpu.write_canonical_state(state_cpu.data_ptr<float>());
 
     std::vector<int> batch_sizes = {1,   2,    4,    8,    16,      32,      64,      128,    256,
                                     512, 1024, 2048, 4096, 1 << 13, 1 << 14, 1 << 15, 1 << 16};

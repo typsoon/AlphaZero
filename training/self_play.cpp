@@ -20,16 +20,17 @@ static torch::Tensor vector_to_tensor(std::vector<float> &data) {
     return torch::from_blob(data.data(), {static_cast<long>(data.size())}, torch::kFloat);
 }
 
-static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
-                      ReplayBuffer &replay_buffer) {
+static void play_game(std::shared_ptr<Game> game, std::unique_ptr<MCTS> mcts,
+                      ReplayBuffer &replay_buffer, int mcts_num_simulations, int mcts_batch_size) {
     game->reset();
     std::vector<Transition> trajectory;
 
     while (!game->is_terminal()) {
-        auto canonical_state = game->get_canonical_state();
-        torch::Tensor game_state_tensor = std::move(canonical_state);
+        auto shape = game->get_state_shape();
+        torch::Tensor game_state_tensor = torch::empty(shape, torch::kFloat32);
+        game->write_canonical_state(game_state_tensor.data_ptr<float>());
         game_state_tensor = game_state_tensor.unsqueeze(0);
-        auto [policy, root_value] = mcts->search(*game);
+        auto [policy, root_value] = mcts->search(*game, mcts_num_simulations, mcts_batch_size);
 
         // Temperature scaling: tau=1 for first 30 moves, tau->0 (argmax) afterwards
         int action = -1;
@@ -56,11 +57,13 @@ static void play_game(std::unique_ptr<Game> game, std::unique_ptr<MCTS> mcts,
 }
 
 void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
-               ReplayBuffer &replay_buffer, int num_games, int thread_count) {
+               ReplayBuffer &replay_buffer, int num_games, int thread_count,
+               int mcts_num_simulations, int mcts_batch_size) {
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
-    auto inferer_factory = NetworkInfererFactory(network_path, device);
+    auto inferer_factory =
+        NetworkInfererFactory(network_path, device, thread_count * mcts_batch_size);
     MCTSFactory mcts_factory(inferer_factory);
 
     std::atomic<int> games_finished{0};
@@ -68,7 +71,8 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
 #pragma omp parallel for schedule(dynamic) num_threads(thread_count)
     for (int i = 0; i < num_games; i++) { // NOLINT
         auto mcts = mcts_factory.get_mcts();
-        play_game(initial_game->clone(), std::move(mcts), replay_buffer);
+        play_game(initial_game->clone(), std::move(mcts), replay_buffer, mcts_num_simulations,
+                  mcts_batch_size);
 
         auto current_finished = ++games_finished;
 
