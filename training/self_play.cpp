@@ -63,8 +63,11 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
-    auto inferer_factory =
-        NetworkInfererFactory(network_path, device, thread_count * mcts_batch_size);
+    // Set wait_for_count to something more reasonable like 2-4 threads worth of batches, and
+    // timeout to 2ms to prevent CPU threads from starving.
+    int wait_for_count = std::min(thread_count, 4) * mcts_batch_size;
+    int timeout_ms = 2;
+    auto inferer_factory = NetworkInfererFactory(network_path, device, wait_for_count, timeout_ms);
     MCTSFactory mcts_factory(inferer_factory);
 
     std::atomic<int> games_finished{0};
