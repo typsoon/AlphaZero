@@ -1,6 +1,7 @@
 #include "mcts.hpp"
 #include "basic_inferer.hpp"
 
+#include <algorithm>
 #include <c10/core/Device.h>
 #include <cmath>
 #include <cstring>
@@ -12,25 +13,29 @@
 #include <random>
 
 struct MCTS::Node {
-    using NodePtr = std::unique_ptr<Node>;
-    std::shared_ptr<Game> game_state;
-    vector<NodePtr> children;
+    Node **children;
+    int action_size;
     Node *parent = nullptr;
     int visits = 0;
     float value = 0.0f;
     float prior = 0.0f;
     bool expanded = false;
+    bool is_terminal = false;
+    float reward = 0.0f;
     int virtual_loss_count = 0;
+    int* valid_actions = nullptr;
+    int valid_action_count = 0;
     static constexpr float VL = 1.0f;
 
-    Node(std::shared_ptr<Game> state, float prior_value = 0.0f, Node *parent_node = nullptr);
+    Node(int action_size, std::pmr::memory_resource *pool, float prior_value = 0.0f,
+         Node *parent_node = nullptr, bool terminal = false, float rew = 0.0f);
 
     float Q() const;
     float UCB(float exploration_weight) const;
 
-    void expand(const std::vector<float> &policy);
+    void expand(const std::vector<std::pair<int, float>> &policy, std::pmr::memory_resource *pool);
 
-    bool is_terminal() const;
+    bool terminal() const;
     bool is_expanded() const;
 
     std::pair<int, Node *> select_child(float exploration_weight) const;
@@ -49,9 +54,12 @@ void MCTS::Node::backpropagate(Node *node, float value, bool vloss) {
     }
 }
 
-MCTS::Node::Node(std::shared_ptr<Game> state, float prior_value, Node *parent_node) // NOLINT
-    : game_state(std::move(state)), prior(prior_value), parent(parent_node) {
-    children.resize(game_state->getActionSize());
+MCTS::Node::Node(int action_size, std::pmr::memory_resource * /*pool*/, float prior_value,
+                 Node *parent_node, bool terminal, float rew) // NOLINT
+    : action_size(action_size), parent(parent_node), prior(prior_value), is_terminal(terminal),
+      children(nullptr), reward(rew), valid_actions(nullptr), valid_action_count(0) {
+    // We defer the allocation of the `children` array until `expand()` is called.
+    // Unexpanded leaf nodes do not need a children array. This saves ~1.1MB per expansion!
 }
 
 float MCTS::Node::Q() const {
@@ -69,20 +77,32 @@ float MCTS::Node::UCB(float exploration_weight) const {
                    (1 + visits + virtual_loss_count));
 }
 
-void MCTS::Node::expand(const std::vector<float> &policy) {
-    for (int i = 0; i < policy.size(); i++) {
-        if (policy[i] == 0.0f)
-            continue;
-        auto child_state = game_state->clone();
-        child_state->step(i);
+void MCTS::Node::expand(const std::vector<std::pair<int, float>> &policy, std::pmr::memory_resource *pool) {
+    // Allocate the children array now that the node is actually being expanded.
+    children = static_cast<Node **>(pool->allocate(action_size * sizeof(Node *), alignof(Node *)));
+    std::memset(static_cast<void*>(children), 0, action_size * sizeof(Node *));
 
-        children[i] = make_unique<Node>(std::move(child_state), policy[i], this);
+    valid_actions = static_cast<int *>(pool->allocate(policy.size() * sizeof(int), alignof(int)));
+    int idx = 0;
+
+    std::pmr::polymorphic_allocator<Node> alloc(pool);
+    for (const auto& pair : policy) {
+        int i = pair.first;
+        float p = pair.second;
+        if (p == 0.0f)
+            continue;
+
+        Node *child = alloc.allocate(1);
+        alloc.construct(child, action_size, pool, p, this, false, 0.0f);
+        children[i] = child;
+        valid_actions[idx++] = i;
     }
+    valid_action_count = idx;
     expanded = true;
 }
 
-bool MCTS::Node::is_terminal() const {
-    return game_state->is_terminal();
+bool MCTS::Node::terminal() const {
+    return is_terminal;
 }
 
 bool MCTS::Node::is_expanded() const {
@@ -92,108 +112,116 @@ bool MCTS::Node::is_expanded() const {
 std::pair<int, MCTS::Node *> MCTS::Node::select_child(float exploration_weight) const { // NOLINT
     int best_index = -1;
     float best_value = -std::numeric_limits<float>::infinity();
-    for (int i = 0; i < children.size(); i++) {
-        if (!children[i])
-            continue;
-        float ucb_value = 0.0f;
-        ucb_value = children[i]->UCB(exploration_weight);
+    for (int k = 0; k < valid_action_count; ++k) {
+        int i = valid_actions[k];
+        float ucb_value = children[i]->UCB(exploration_weight);
         if (ucb_value > best_value) {
             best_value = ucb_value;
             best_index = i;
         }
     }
-    return {best_index, children[best_index].get()};
+    return {best_index, best_index != -1 ? children[best_index] : nullptr};
 }
 
-MCTS::MCTS(unique_ptr<Inferer> &&network_ptr, float c_init, float c_base, float eps,
-           float alpha) // NOLINT
+MCTS::MCTS(unique_ptr<Inferer> &&network_ptr, float c_init, float c_base, float eps, float alpha,
+           size_t arena_size_bytes) // NOLINT
     : network(std::move(network_ptr)), c_init(c_init), c_base(c_base), eps(eps), alpha(alpha),
-      device(this->network->device) {}
+      device(this->network->device), arena_buffer(arena_size_bytes),
+      pool(arena_buffer.data(), arena_buffer.size()) {}
 
 MCTS::MCTS(std::string network_path, torch::Device device, float c_init, float c_base,
            float eps, // NOLINT
-           float alpha)
+           float alpha, size_t arena_size_bytes)
     : network([&device, &network_path]() {
           auto network_inferer_factory = NetworkInfererFactory(network_path, device);
           return network_inferer_factory.get_inferer();
       }()),
-      c_init(c_init), c_base(c_base), eps(eps), alpha(alpha), device(this->network->device) {}
+      c_init(c_init), c_base(c_base), eps(eps), alpha(alpha), device(this->network->device),
+      arena_buffer(arena_size_bytes), pool(arena_buffer.data(), arena_buffer.size()) {}
 
-void MCTS::evaluate_batch(std::vector<Node *> &leaves) { // NOLINT
+void MCTS::evaluate_batch(std::vector<std::pair<Node *, std::shared_ptr<Game>>> &leaves,
+                          std::pmr::memory_resource *pool) { // NOLINT
     if (leaves.empty())
         return;
 
     std::vector<const GameState *> states;
     states.reserve(leaves.size());
-    for (auto *leaf : leaves) {
-        states.push_back(leaf->game_state->get_canonical_state().get());
+    for (auto &[leaf, game] : leaves) {
+        states.push_back(game->get_canonical_state().get());
     }
 
     auto outputs = network->infer(states);
 
     for (size_t i = 0; i < leaves.size(); ++i) {
-        Node *node = leaves[i];
-        const auto &[policy_tensor, value] = outputs[i];
+        Node *node = leaves[i].first;
+        auto game = leaves[i].second;
+        const auto &res = outputs[i];
 
         if (node->is_expanded()) {
-            Node::backpropagate(node, value, true);
+            Node::backpropagate(node, res.value, true);
             continue;
         }
 
-        auto policy =
-            get_policy_from_logits(policy_tensor, node->game_state->get_legal_actions(), false);
+        auto policy = get_policy_from_logits(res, game->get_legal_actions(), false);
 
-        node->expand(policy);
-        Node::backpropagate(node, value, true);
+        node->expand(policy, pool);
+        Node::backpropagate(node, res.value, true);
     }
 }
 
 std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simulations, // NOLINT
                                                   int batch_size) {
-    auto root_game = game.clone();
-    Node root_node(std::move(root_game));
+    pool.release();
+    Node root_node(game.getActionSize(), &pool, 0.0f, nullptr, game.is_terminal(), game.reward());
 
-    auto inference_res = network->infer(
-        std::vector<const GameState *>{root_node.game_state->get_canonical_state().get()});
-    float root_value = inference_res.front().second;
-    auto p_init = get_policy_from_logits(inference_res.front().first,
-                                         root_node.game_state->get_legal_actions(), true);
-    root_node.expand(p_init);
+    auto inference_res =
+        network->infer(std::vector<const GameState *>{game.get_canonical_state().get()});
+    float root_value = inference_res.front().value;
+    auto p_init =
+        get_policy_from_logits(inference_res.front(), game.get_legal_actions(), true);
+    root_node.expand(p_init, &pool);
 
     int simulations_done = 0;
-    std::vector<Node *> leaves;
+    std::vector<std::pair<Node *, std::shared_ptr<Game>>> leaves;
     while (simulations_done < num_simulations) {
         leaves.clear();
 
         for (int b = 0; b < batch_size && simulations_done < num_simulations;
              ++b, ++simulations_done) {
             Node *node = &root_node;
+            auto current_game = game.clone();
             float c_puct = std::log((1 + node->visits + c_base) / c_base) + c_init;
 
-            while (node->is_expanded() && !node->is_terminal()) {
+            while (node->is_expanded() && !node->terminal()) {
                 auto [best_action, best_child] = node->select_child(c_puct);
                 node->virtual_loss_count++;
                 node = best_child;
+                current_game->step(best_action);
+
+                if (node->visits == 0 && current_game->is_terminal()) {
+                    node->is_terminal = true;
+                    node->reward = current_game->reward();
+                }
                 c_puct = std::log((1 + node->visits + c_base) / c_base) + c_init;
             }
 
             node->virtual_loss_count++;
 
-            if (!node->is_terminal()) {
-                leaves.push_back(node);
+            if (!node->terminal()) {
+                leaves.emplace_back(node, std::move(current_game));
             } else {
-                Node::backpropagate(node, -node->game_state->reward(), true);
+                Node::backpropagate(node, -node->reward, true);
             }
         }
 
-        evaluate_batch(leaves);
+        evaluate_batch(leaves, &pool);
     }
 
     int A = game.getActionSize();
     std::vector<float> policy(A, 0.0f);
     std::vector<float> pi(A, 0.0f);
     for (int a = 0; a < A; a++) {
-        if (root_node.children[a])
+        if (root_node.children[a] != nullptr)
             pi[a] = static_cast<float>(root_node.children[a]->visits);
     }
     float sum = std::accumulate(pi.begin(), pi.end(), 0.0f);
@@ -203,37 +231,33 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
     return {pi, root_value};
 }
 
-std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,
-                                                const std::vector<int> &legal_actions,
-                                                bool dirichletNoise) const {
+std::vector<std::pair<int, float>> MCTS::get_policy_from_logits(const inference_result &res,
+                                              const std::vector<int> &legal_actions,
+                                              bool dirichletNoise) const {
     // We omit libtorch (ATen) operations here (like torch::tensor, torch::softmax)
     // because the ATen dispatcher overhead and allocations are extremely slow for
     // small vectors on the CPU (e.g., 7 elements for Connect4). A pure C++
     // implementation is ~6x faster and avoids creating intermediate tensors.
     // It operates on the same 32-bit floats natively, so no precision is lost.
 
-    policy_logits = policy_logits.squeeze(0).cpu().contiguous();
-    int A = policy_logits.size(0);
-    const float *logits_data = policy_logits.data_ptr<float>();
-
-    std::vector<float> policy_vec(A, 0.0f);
+    std::vector<std::pair<int, float>> policy_vec;
+    policy_vec.reserve(legal_actions.size());
 
     float max_logit = -std::numeric_limits<float>::infinity();
-    for (int a : legal_actions) {
-        if (logits_data[a] > max_logit) {
-            max_logit = logits_data[a];
-        }
+    for (auto a : legal_actions) {
+        max_logit = std::max(res[a], max_logit);
     }
 
     float sum_exp = 0.0f;
     for (int a : legal_actions) {
-        policy_vec[a] = std::exp(logits_data[a] - max_logit);
-        sum_exp += policy_vec[a];
+        float p = std::exp(res[a] - max_logit);
+        policy_vec.emplace_back(a, p);
+        sum_exp += p;
     }
 
     if (sum_exp > 0.0f) {
-        for (int a : legal_actions) {
-            policy_vec[a] /= sum_exp;
+        for (auto &pair : policy_vec) {
+            pair.second /= sum_exp;
         }
     }
 
@@ -241,9 +265,8 @@ std::vector<float> MCTS::get_policy_from_logits(torch::Tensor policy_logits,
         std::vector<float> alpha_vec(legal_actions.size(), alpha);
         auto noise_vec = sample_dirichlet(alpha_vec);
 
-        for (size_t i = 0; i < legal_actions.size(); ++i) {
-            int a = legal_actions[i];
-            policy_vec[a] = ((1.0f - eps) * policy_vec[a]) + (eps * noise_vec[i]);
+        for (size_t i = 0; i < policy_vec.size(); ++i) {
+            policy_vec[i].second = ((1.0f - eps) * policy_vec[i].second) + (eps * noise_vec[i]);
         }
     }
 

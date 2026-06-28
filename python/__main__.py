@@ -1,6 +1,6 @@
 import torch
-from .pybind.engine_bind import Connect4  # pyright: ignore
-from .pybind.self_play_bind import self_play_connect4  # pyright: ignore
+from .pybind.engine_bind import Connect4, Chess  # pyright: ignore
+from .pybind.self_play_bind import self_play_connect4, self_play  # pyright: ignore
 from .checkpoint_manager import CheckpointManager
 from .injectors import (
     get_network,
@@ -40,6 +40,13 @@ def get_args():
         type=str,
         default="AZNetwork",
         help="Checkpoint file prefix",
+    )
+    parser.add_argument(
+        "--game",
+        type=str,
+        default="connect4",
+        choices=["connect4", "chess"],
+        help="Which game to train",
     )
 
     parser.add_argument(
@@ -81,6 +88,12 @@ def get_args():
         default=5,
         help="Maximum number of historical checkpoints to keep",
     )
+    parser.add_argument(
+        "--max-moves",
+        type=int,
+        default=512,
+        help="Maximum number of moves before a game is truncated",
+    )
 
     return parser.parse_args()
 
@@ -90,8 +103,8 @@ if __name__ == "__main__":
     args = get_args()
 
     manager = CheckpointManager(
-        args.checkpoint_stem,
-        PROJ_ROOT / args.checkpoint_dir,
+        f"{args.game}_{args.checkpoint_stem}",
+        PROJ_ROOT / args.checkpoint_dir / args.game,
         args.max_checkpoints,
     )
 
@@ -103,12 +116,18 @@ if __name__ == "__main__":
             logging.warning(
                 f"Initial network file '{args.initial_network}' not found. Initializing a fresh AlphaZero network."
             )
+        if args.game == "connect4":
             network = get_network(Connect4)
+        else:
+            network = get_network(Chess)
     else:
         logging.info(
             "No initial network provided. Initializing a fresh AlphaZero network."
         )
-        network = get_network(Connect4)
+        if args.game == "connect4":
+            network = get_network(Connect4)
+        else:
+            network = get_network(Chess)
 
     manager.add_checkpoint(network)
 
@@ -116,11 +135,16 @@ if __name__ == "__main__":
         f"Starting AlphaZero training loop: {args.loop_iterations} outer iterations, {args.games_in_each_iteration} games per iter."
     )
 
+    if args.game == "connect4":
+        game_data = (Connect4, self_play_connect4)
+    else:
+        game_data = (Chess, self_play)
+
     self_play_and_train_loop(
         checkpoint_manager=manager,
         network_type=AlphaZeroNetwork,
         network_device=device,
-        game_data=(Connect4, self_play_connect4),
+        game_data=game_data,
         trainer_factory=get_trainer,
         loop_iterations=args.loop_iterations,
         games_in_each_iteration=args.games_in_each_iteration,
@@ -129,4 +153,5 @@ if __name__ == "__main__":
         minibatch_size=args.minibatch_size,
         batch_size=args.batch_size,
         thread_count=args.thread_count,
+        max_moves=args.max_moves,
     )

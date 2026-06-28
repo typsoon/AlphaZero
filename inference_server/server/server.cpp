@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -74,7 +75,8 @@ void set_up_and_run_server(std::string socket_path, std::shared_ptr<M> model,
                     resp.write(R"({"error":"Malformed JSON request"})");
                     resp.end();
                     return;
-                } catch (const std::exception &) {
+                } catch (const std::exception &e) {
+                    spdlog::error("Exception in predict: {}", e.what());
                     resp.code = 500;
                     resp.write(R"({"error":"Internal server error"})");
                     resp.end();

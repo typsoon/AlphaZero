@@ -16,3 +16,7 @@ vcpkg/
 checkpoints/
 compile_commands.json
 vcpkg_installed/
+perf_report.txt
+callgrind.out
+perf.data
+vgcore*

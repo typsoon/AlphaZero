@@ -4,7 +4,15 @@
 #include "game.hpp"
 #include <torch/torch.h>
 
-using inference_result = std::pair<torch::Tensor, float>;
+struct inference_result {
+    torch::Tensor batch_policy;
+    int row_index;
+    float value;
+
+    inline float operator[](int action_index) const {
+        return batch_policy.data_ptr<float>()[row_index * batch_policy.size(1) + action_index];
+    }
+};
 struct Inferer {
     // Inferer should have a method to predict the policy and value for a given
     // game state

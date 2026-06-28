@@ -10,9 +10,11 @@ PYBIND11_MODULE(self_play_bind, m) {
 
     m.def("self_play", &self_play, py::arg("game"), py::arg("network_path"), py::arg("replay_buf"),
           py::arg("num_games") = 100, py::arg("thread_count") = 1,
-          py::arg("mcts_num_simulations") = 800, py::arg("mcts_batch_size") = 32);
+          py::arg("mcts_num_simulations") = 800, py::arg("mcts_batch_size") = 32,
+          py::arg("max_moves") = 512);
 
     m.def("self_play_connect4", &self_play, py::arg("game"), py::arg("network_path"),
           py::arg("replay_buf"), py::arg("num_games") = 100, py::arg("thread_count") = 1,
-          py::arg("mcts_num_simulations") = 800, py::arg("mcts_batch_size") = 32);
+          py::arg("mcts_num_simulations") = 800, py::arg("mcts_batch_size") = 32,
+          py::arg("max_moves") = 512);
 }

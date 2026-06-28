@@ -21,11 +21,12 @@ static torch::Tensor vector_to_tensor(std::vector<float> &data) {
 }
 
 static void play_game(std::shared_ptr<Game> game, std::unique_ptr<MCTS> mcts,
-                      ReplayBuffer &replay_buffer, int mcts_num_simulations, int mcts_batch_size) {
+                      ReplayBuffer &replay_buffer, int mcts_num_simulations, int mcts_batch_size,
+                      int max_moves) {
     game->reset();
     std::vector<Transition> trajectory;
 
-    while (!game->is_terminal()) {
+    while (!game->is_terminal() && trajectory.size() < max_moves) {
         auto shape = game->get_state_shape();
         torch::Tensor game_state_tensor = torch::empty(shape, torch::kFloat32);
         game->write_canonical_state(game_state_tensor.data_ptr<float>());
@@ -58,7 +59,7 @@ static void play_game(std::shared_ptr<Game> game, std::unique_ptr<MCTS> mcts,
 
 void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
                ReplayBuffer &replay_buffer, int num_games, int thread_count,
-               int mcts_num_simulations, int mcts_batch_size) {
+               int mcts_num_simulations, int mcts_batch_size, int max_moves) {
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
@@ -72,7 +73,7 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
     for (int i = 0; i < num_games; i++) { // NOLINT
         auto mcts = mcts_factory.get_mcts();
         play_game(initial_game->clone(), std::move(mcts), replay_buffer, mcts_num_simulations,
-                  mcts_batch_size);
+                  mcts_batch_size, max_moves);
 
         auto current_finished = ++games_finished;
 

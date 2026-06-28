@@ -2,6 +2,7 @@
 #include "mcts.hpp"
 #include "replay_buffer.hpp"
 #include <c10/core/Device.h>
+#include <game/chess.hpp>
 #include <game/connect4.hpp>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -57,6 +58,17 @@ PYBIND11_MODULE(engine_bind, m) {
         // .def("clone", &Connect4::clone)
         // .def("render", &Connect4::render)
         ;
+
+        py::class_<Game2D<8, 8>, Game, std::shared_ptr<Game2D<8, 8>>>(m, "Game2D_8_8")
+            .def("get_board_state", &Game2D<8, 8>::get_board_state)
+            .def_readonly_static("ROWS", &Game2D<8, 8>::ROWS)
+            .def_readonly_static("COLS", &Game2D<8, 8>::COLS);
+
+        py::class_<Chess, Game2D<8, 8>, std::shared_ptr<Chess>>(m, "Chess")
+            .def(py::init<>())
+            .def_readonly_static("action_dim", &Chess::action_dim)
+            .def_property_readonly_static("state_dim",
+                                          [](py::object /* self */) { return Chess::state_dim; });
 
         py::class_<MCTS>(m, "MCTS")
             .def(py::init<std::string, torch::Device, float, float, float, float>(),

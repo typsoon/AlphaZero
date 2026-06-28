@@ -53,13 +53,13 @@ class DynamicBatcher {
             torch::NoGradGuard no_grad;
             auto result = infer_method({batched});
             auto outputs = result.toTuple()->elements();
-            torch::Tensor policy = outputs[0].toTensor().cpu();
+            torch::Tensor policy = outputs[0].toTensor().cpu().contiguous();
             torch::Tensor value = outputs[1].toTensor().cpu().contiguous();
             const float *value_ptr = value.data_ptr<float>();
 
             out.reserve(batch_size);
             for (int64_t i = 0; i < batch_size; ++i) {
-                out.emplace_back(policy[i], value_ptr[i]);
+                out.push_back(inference_result{policy, static_cast<int>(i), value_ptr[i]});
             }
         } catch (const std::exception &e) {
             spdlog::error("Exception caught in execute_tensor_batch: {}", e.what());

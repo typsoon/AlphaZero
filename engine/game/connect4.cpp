@@ -20,7 +20,7 @@ static int determine_current_player(const Connect4::board_t &board) {
     int player1_count = 0;
     int player2_count = 0;
     for (const auto &row : board) {
-        for (int cell : row) {
+        for (auto cell : row) {
             if (cell == 1)
                 player1_count++;
             else if (cell == -1)
@@ -165,6 +165,12 @@ float Connect4::reward() const {
 }
 
 std::shared_ptr<const GameState> Connect4::get_canonical_state() const {
+    if (weak_from_this().expired()) {
+        // If the game object is on the stack (not managed by shared_ptr),
+        // return an aliasing shared_ptr with a no-op deleter to prevent crashes
+        // while avoiding heap allocation/copying.
+        return {this, [](const GameState *) {}};
+    }
     return shared_from_this();
 }
 
@@ -232,14 +238,8 @@ bool Connect4::checkDirection(int row, int col, int dRow, int dCol) const {
     return false;
 }
 
-vector<vector<int>> Connect4::get_board_state() const {
-    vector<vector<int>> vec_board(ROWS, vector<int>(COLS, 0));
-    for (int r = 0; r < ROWS; r++) {
-        for (int c = 0; c < COLS; c++) {
-            vec_board[r][c] = board[r][c];
-        }
-    }
-    return vec_board;
+Connect4::board_t Connect4::get_board_state() const {
+    return board;
 }
 
 void Connect4::reset_initial_state() {

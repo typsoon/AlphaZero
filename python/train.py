@@ -128,6 +128,7 @@ def self_play_and_train_loop(
     thread_count: int,
     replay_buffer_size: int,
     minibatch_size: int,
+    max_moves: int = 512,
 ):
     # We MUST pass network_device here so the C++ clone() inherits the same device.
     # Otherwise, it defaults to CPU, causing a CUDA/CPU mismatch during batched inference.
@@ -141,11 +142,12 @@ def self_play_and_train_loop(
 
     for _ in range(loop_iterations):
         self_play_method(
-            game,
-            checkpoint_manager.get_latest_scripted_checkpoint_file(),
-            replay_buffer,
-            games_in_each_iteration,
-            thread_count,
+            game=game,
+            network_path=checkpoint_manager.get_latest_scripted_checkpoint_file(),
+            replay_buf=replay_buffer,
+            num_games=games_in_each_iteration,
+            thread_count=thread_count,
+            max_moves=max_moves,
         )
 
         trainer = trainer_factory(

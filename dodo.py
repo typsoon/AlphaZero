@@ -22,9 +22,30 @@ NETWORK_PARAM = {
     "name": "network_path",
     "long": "network_path",
     "type": str,
-    "default": str(PROJ_ROOT / "checkpoints" / "scripted" / "AZNetwork_0.pt_scripted"),
-    "help": "Path to the scripted network file",
+    "default": "",
+    "help": "Path to the scripted network file. Defaults to checkpoints/<game>/scripted/AZNetwork_0.pt_scripted",
 }
+
+
+def resolve_network_path(network_path, game="connect4"):
+    if not network_path:
+        return str(
+            PROJ_ROOT / "checkpoints" / game / "scripted" / "AZNetwork_0.pt_scripted"
+        )
+    return network_path
+
+
+def run_protected(cmd):
+    """Run a shell command and wait for it to finish even if Ctrl+C is pressed, allowing children to exit cleanly."""
+    import subprocess
+
+    p = subprocess.Popen(cmd, shell=True)
+    try:
+        p.wait()
+    except KeyboardInterrupt:
+        # Give the child process (like perf) a chance to handle SIGINT and flush data
+        p.wait()
+    return p.returncode == 0
 
 
 def with_report(cmd):
@@ -72,10 +93,11 @@ def get_ruff_cmd(cmd_prefix):
 def get_clang_tidy_cmd(args):
     """Returns the correct clang-tidy command using fd (if available) or falling back to find."""
     excludes = GLOBAL_EXCLUDES
-    
+
     import sys
     import os
     import glob
+
     env_root = os.path.dirname(os.path.dirname(sys.executable))
     omp_paths = glob.glob(f"{env_root}/lib/gcc/*/*/include")
     if omp_paths:
@@ -205,27 +227,59 @@ def task_build():
     compile_commands = BUILD_DIR / "compile_commands.json"
     toolchain = PROJ_ROOT / "vcpkg" / "scripts" / "buildsystems" / "vcpkg.cmake"
 
-    cmake_cmd = (
-        f"cmake -S {PROJ_ROOT} -B {BUILD_DIR} "
-        "-DCMAKE_PREFIX_PATH=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)') "
-        "-DPython3_EXECUTABLE=$(which python) "
-        "-DPYTHON_EXECUTABLE=$(which python) "
-        "-DBUILD_TESTS=ON "
-        "-DVCPKG_MANIFEST_FEATURES=test "
-        f"-DCMAKE_TOOLCHAIN_FILE={toolchain}"
-    )
+    default_build_type = "debug"
+    if cmake_cache.exists():
+        with open(cmake_cache) as f:
+            if "CMAKE_BUILD_TYPE:STRING=Release" in f.read():
+                default_build_type = "release"
 
-    # Automatically use ccache to speed up compilation if the user has it installed
-    if shutil.which("ccache"):
-        cmake_cmd += (
-            " -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
+    def build_action(build_type):
+        build_type = build_type.capitalize()
+
+        run_cmake = True
+        if cmake_cache.exists():
+            with open(cmake_cache) as f:
+                if f"CMAKE_BUILD_TYPE:STRING={build_type}" in f.read():
+                    run_cmake = False
+
+        cmake_cmd = (
+            f"cmake -S {PROJ_ROOT} -B {BUILD_DIR} "
+            f"-DCMAKE_BUILD_TYPE={build_type} "
+            "-DCMAKE_PREFIX_PATH=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)') "
+            "-DPython3_EXECUTABLE=$(which python) "
+            "-DPYTHON_EXECUTABLE=$(which python) "
+            "-DBUILD_TESTS=ON "
+            "-DVCPKG_MANIFEST_FEATURES=test "
+            f"-DCMAKE_TOOLCHAIN_FILE={toolchain}"
         )
 
+        if shutil.which("ccache"):
+            cmake_cmd += (
+                " -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
+            )
+
+        if run_cmake:
+            if not run_protected(cmake_cmd):
+                return False
+
+        if not run_protected(f"cmake --build {BUILD_DIR} -j$(nproc)"):
+            return False
+
+        run_protected(f"test -f {compile_commands} && ln -sf {compile_commands} {PROJ_ROOT} || true")
+        return True
+
     return {
-        "actions": [
-            f"test -f {cmake_cache} || {cmake_cmd}",
-            f"cmake --build {BUILD_DIR} -j$(nproc)",
-            f"test -f {compile_commands} && ln -sf {compile_commands} {PROJ_ROOT} || true",
+        "actions": [build_action],
+        "params": [
+            {
+                "name": "build_type",
+                "short": "t",
+                "long": "type",
+                "type": str,
+                "default": default_build_type,
+                "choices": (("debug", "Debug mode"), ("release", "Release mode")),
+                "help": "Build type (debug or release)",
+            }
         ],
         "task_dep": ["setup_vcpkg"],
     }
@@ -250,8 +304,9 @@ def task_test_train_loss():
 def task_test_cpp():
     """Run C++ tests."""
     test_bin = BUILD_DIR / "inference_server" / "tests" / "inference_server_tests"
+    test_chess = BUILD_DIR / "engine" / "test_chess"
     return {
-        "actions": [with_report(f"{test_bin}")],
+        "actions": [with_report(f"{test_bin}"), with_report(f"{test_chess}")],
         "task_dep": ["build"],
     }
 
@@ -295,15 +350,11 @@ def task_test_performance():
     inference_bin = BUILD_DIR / "inference_server" / "inference_server"
 
     def run_evaluator(network_path, mcts_search_depth):
-        import subprocess
-
+        network_path = resolve_network_path(network_path, "connect4")
         cmd = f"{sys.executable} -m performance_evaluation.evaluator --network-path {network_path} --inference-binary {inference_bin}"
         if mcts_search_depth is not None:
             cmd += f" --mcts-search-depth {mcts_search_depth}"
-
-        full_cmd = with_report(cmd)
-        result = subprocess.run(full_cmd, shell=True)
-        return result.returncode == 0
+        return run_protected(cmd)
 
     return {
         "actions": [
@@ -339,12 +390,16 @@ def task_run_game_server():
 def task_benchmark_batch_size():
     """Run the batch size benchmark."""
     inference_bin = BUILD_DIR / "inference_server" / "inference_server"
+
+    def run_benchmark(network_path):
+        network_path = resolve_network_path(network_path, "connect4")
+        cmd = with_report(
+            f"{sys.executable} -m performance_evaluation.benchmark_batch_size --network-path {network_path} --inference-binary {inference_bin}"
+        )
+        return run_protected(cmd)
+
     return {
-        "actions": [
-            with_report(
-                f"{sys.executable} -m performance_evaluation.benchmark_batch_size --network-path %(network_path)s --inference-binary {inference_bin}"
-            )
-        ],
+        "actions": [run_benchmark],
         "params": [NETWORK_PARAM],
         "task_dep": ["build"],
     }
@@ -359,32 +414,58 @@ def task_clear_db():
     }
 
 
+def _get_profile_params(default_num_games: int, default_thread_count: int) -> list:
+    return [
+        {
+            "name": "game",
+            "short": "g",
+            "long": "game",
+            "type": str,
+            "default": "connect4",
+            "help": "Game to profile",
+            "choices": (("connect4", "Connect4"), ("chess", "Chess")),
+        },
+        NETWORK_PARAM,
+        {
+            "name": "num_games",
+            "long": "num_games",
+            "type": int,
+            "default": default_num_games,
+            "help": "Number of games to profile",
+        },
+        {
+            "name": "thread_count",
+            "long": "thread_count",
+            "type": int,
+            "default": default_thread_count,
+            "help": "Number of threads to use",
+        },
+        {
+            "name": "max_moves",
+            "long": "max_moves",
+            "type": int,
+            "default": 512,
+            "help": "Maximum number of moves per game before forcing a draw",
+        },
+    ]
+
+
 def task_profile_self_play_cachegrind():
     """Run a profiler on the self_play execution using cachegrind."""
     profiling_bin = BUILD_DIR / "engine" / "profiling" / "run_self_play"
+
+    def run_cachegrind(game, network_path, num_games, thread_count, max_moves):
+        network_path = resolve_network_path(network_path, game)
+        cmd = f"valgrind --tool=cachegrind --cachegrind-out-file=cachegrind.out {profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves}"
+        return run_protected(cmd)
+
     return {
         "actions": [
             f"cmake --build {BUILD_DIR} --target run_self_play -j$(nproc)",
-            f"valgrind --tool=cachegrind --cachegrind-out-file=cachegrind.out {profiling_bin} %(network_path)s %(num_games)s %(thread_count)s",
+            run_cachegrind,
             "echo '\\033[32mRun `kcachegrind cachegrind.out` to view the profiling results.\\033[0m'",
         ],
-        "params": [
-            NETWORK_PARAM,
-            {
-                "name": "num_games",
-                "long": "num_games",
-                "type": int,
-                "default": 2,
-                "help": "Number of games to profile",
-            },
-            {
-                "name": "thread_count",
-                "long": "thread_count",
-                "type": int,
-                "default": 1,
-                "help": "Number of threads to use",
-            },
-        ],
+        "params": _get_profile_params(default_num_games=2, default_thread_count=1),
         "task_dep": ["setup_vcpkg"],
     }
 
@@ -392,28 +473,18 @@ def task_profile_self_play_cachegrind():
 def task_profile_self_play_perf():
     """Run a multithreaded profiler on the self_play execution using Linux perf."""
     profiling_bin = BUILD_DIR / "engine" / "profiling" / "run_self_play"
+
+    def run_perf(game, network_path, num_games, thread_count, max_moves):
+        network_path = resolve_network_path(network_path, game)
+        cmd = f"perf record -g -o perf.data {profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves}"
+        return run_protected(cmd)
+
     return {
         "actions": [
             f"cmake --build {BUILD_DIR} --target run_self_play -j$(nproc)",
-            f"perf record -g -o perf.data {profiling_bin} %(network_path)s %(num_games)s %(thread_count)s",
+            run_perf,
             "echo '\\033[32mRun `perf report -g` to view the multithreaded profiling results.\\033[0m'",
         ],
-        "params": [
-            NETWORK_PARAM,
-            {
-                "name": "num_games",
-                "long": "num_games",
-                "type": int,
-                "default": 10,
-                "help": "Number of games to profile",
-            },
-            {
-                "name": "thread_count",
-                "long": "thread_count",
-                "type": int,
-                "default": 4,
-                "help": "Number of threads to use (defaults to 4 for multithreaded profiling)",
-            },
-        ],
+        "params": _get_profile_params(default_num_games=10, default_thread_count=4),
         "task_dep": ["setup_vcpkg"],
     }

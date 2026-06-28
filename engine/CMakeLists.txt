@@ -38,3 +38,12 @@ target_link_libraries(engine_bind PRIVATE engine "${TORCH_PYTHON_LIBRARY}"
 
 target_include_directories(engine_bind PRIVATE ${Python3_INCLUDE_DIRS}
                                                ${TORCH_INCLUDE_DIRS})
+
+# Tests
+if(BUILD_TESTS)
+  find_package(CppUTest CONFIG REQUIRED)
+  add_executable(test_chess tests/test_chess.cpp)
+  target_link_libraries(test_chess PRIVATE engine CppUTest "${TORCH_LIBRARIES}")
+  target_compile_definitions(test_chess
+                             PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
+endif()

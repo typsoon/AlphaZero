@@ -3,10 +3,10 @@
 
 #include <ATen/core/TensorBody.h>
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <torch/torch.h>
 #include <vector>
-
 using torch::Tensor;
 class GameState {
   public:
@@ -57,16 +57,17 @@ class Game : public GameState, public std::enable_shared_from_this<Game> {
 };
 
 // Abstract base class for 2D board games
-template <int Rows, int Cols> class Game2D : public Game {
+template <int Rows, int Cols, typename CellT = int8_t> class Game2D : public Game {
   public:
     static constexpr int ROWS = Rows;
     static constexpr int COLS = Cols;
 
-    using row_t = std::array<int, COLS>;
+    using cell_t = CellT;
+    using row_t = std::array<cell_t, COLS>;
     using board_t = std::array<row_t, ROWS>;
 
     // The format matches what get_canonical_state computes
-    virtual std::vector<std::vector<int>> get_board_state() const = 0;
+    virtual board_t get_board_state() const = 0;
     // Concrete 2D games can use board_t internally
 };
 
