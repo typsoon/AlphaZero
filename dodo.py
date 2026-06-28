@@ -254,9 +254,7 @@ def task_build():
         )
 
         if shutil.which("ccache"):
-            cmake_cmd += (
-                " -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
-            )
+            cmake_cmd += " -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
 
         if run_cmake:
             if not run_protected(cmake_cmd):
@@ -265,7 +263,9 @@ def task_build():
         if not run_protected(f"cmake --build {BUILD_DIR} -j$(nproc)"):
             return False
 
-        run_protected(f"test -f {compile_commands} && ln -sf {compile_commands} {PROJ_ROOT} || true")
+        run_protected(
+            f"test -f {compile_commands} && ln -sf {compile_commands} {PROJ_ROOT} || true"
+        )
         return True
 
     return {

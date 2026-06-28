@@ -94,6 +94,18 @@ def get_args():
         default=512,
         help="Maximum number of moves before a game is truncated",
     )
+    parser.add_argument(
+        "--mcts-batch-size",
+        type=int,
+        default=32,
+        help="MCTS batch size for neural network inference",
+    )
+    parser.add_argument(
+        "--mcts-simulations",
+        type=int,
+        default=800,
+        help="Number of MCTS simulations per move",
+    )
 
     return parser.parse_args()
 
@@ -154,4 +166,6 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         thread_count=args.thread_count,
         max_moves=args.max_moves,
+        mcts_batch_size=args.mcts_batch_size,
+        mcts_simulations=args.mcts_simulations,
     )

@@ -903,8 +903,8 @@ std::vector<ChessAction<>> Chess::actions(bool stop_early) const {
                     case W_PAWN:
                         moves = b.move_rules_P(i, j).first;
                         break;
-            default:
-                std::abort();
+                    default:
+                        std::abort();
                     }
 
                     for (auto &f : moves) {
@@ -947,8 +947,8 @@ std::vector<ChessAction<>> Chess::actions(bool stop_early) const {
                     case B_PAWN:
                         moves = b.move_rules_p(i, j).first;
                         break;
-            default:
-                std::abort();
+                    default:
+                        std::abort();
                     }
 
                     for (auto &f : moves) {
@@ -993,7 +993,8 @@ std::vector<ChessAction<>> Chess::actions(bool stop_early) const {
 
         if (!bitboard::is_attacked(player, copy)) {
             actss.push_back(act);
-            if (stop_early) return actss;
+            if (stop_early)
+                return actss;
         }
     }
     return actss;

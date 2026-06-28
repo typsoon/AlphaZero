@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) { // NOLINT
 
     auto infer_method = module.get_method("infer");
 
-    Connect4 game_cpu{torch::Device(torch::kCPU)};
+    Connect4 game_cpu{};
     auto shape = game_cpu.get_state_shape();
     torch::Tensor state_cpu = torch::empty(shape, torch::kFloat32);
     game_cpu.write_canonical_state(state_cpu.data_ptr<float>());

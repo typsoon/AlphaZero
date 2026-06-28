@@ -23,7 +23,7 @@ struct MCTS::Node {
     bool is_terminal = false;
     float reward = 0.0f;
     int virtual_loss_count = 0;
-    int* valid_actions = nullptr;
+    int *valid_actions = nullptr;
     int valid_action_count = 0;
     static constexpr float VL = 1.0f;
 
@@ -77,16 +77,17 @@ float MCTS::Node::UCB(float exploration_weight) const {
                    (1 + visits + virtual_loss_count));
 }
 
-void MCTS::Node::expand(const std::vector<std::pair<int, float>> &policy, std::pmr::memory_resource *pool) {
+void MCTS::Node::expand(const std::vector<std::pair<int, float>> &policy,
+                        std::pmr::memory_resource *pool) {
     // Allocate the children array now that the node is actually being expanded.
     children = static_cast<Node **>(pool->allocate(action_size * sizeof(Node *), alignof(Node *)));
-    std::memset(static_cast<void*>(children), 0, action_size * sizeof(Node *));
+    std::memset(static_cast<void *>(children), 0, action_size * sizeof(Node *));
 
     valid_actions = static_cast<int *>(pool->allocate(policy.size() * sizeof(int), alignof(int)));
     int idx = 0;
 
     std::pmr::polymorphic_allocator<Node> alloc(pool);
-    for (const auto& pair : policy) {
+    for (const auto &pair : policy) {
         int i = pair.first;
         float p = pair.second;
         if (p == 0.0f)
@@ -177,8 +178,7 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
     auto inference_res =
         network->infer(std::vector<const GameState *>{game.get_canonical_state().get()});
     float root_value = inference_res.front().value;
-    auto p_init =
-        get_policy_from_logits(inference_res.front(), game.get_legal_actions(), true);
+    auto p_init = get_policy_from_logits(inference_res.front(), game.get_legal_actions(), true);
     root_node.expand(p_init, &pool);
 
     int simulations_done = 0;
@@ -231,9 +231,9 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
     return {pi, root_value};
 }
 
-std::vector<std::pair<int, float>> MCTS::get_policy_from_logits(const inference_result &res,
-                                              const std::vector<int> &legal_actions,
-                                              bool dirichletNoise) const {
+std::vector<std::pair<int, float>>
+MCTS::get_policy_from_logits(const inference_result &res, const std::vector<int> &legal_actions,
+                             bool dirichletNoise) const {
     // We omit libtorch (ATen) operations here (like torch::tensor, torch::softmax)
     // because the ATen dispatcher overhead and allocations are extremely slow for
     // small vectors on the CPU (e.g., 7 elements for Connect4). A pure C++

@@ -129,11 +129,12 @@ def self_play_and_train_loop(
     replay_buffer_size: int,
     minibatch_size: int,
     max_moves: int = 512,
+    mcts_batch_size: int = 32,
+    mcts_simulations: int = 800,
 ):
-    # We MUST pass network_device here so the C++ clone() inherits the same device.
-    # Otherwise, it defaults to CPU, causing a CUDA/CPU mismatch during batched inference.
     game_type, self_play_method = game_data
-    game = game_type(network_device)
+    game = game_type()
+
     replay_buffer = ReplayBuffer(replay_buffer_size)
 
     network = network_type.load_az_network(
@@ -147,6 +148,8 @@ def self_play_and_train_loop(
             replay_buf=replay_buffer,
             num_games=games_in_each_iteration,
             thread_count=thread_count,
+            mcts_num_simulations=mcts_simulations,
+            mcts_batch_size=mcts_batch_size,
             max_moves=max_moves,
         )
 

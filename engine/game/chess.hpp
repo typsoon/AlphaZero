@@ -28,7 +28,7 @@ template <typename T = int8_t> struct ChessAction {
     T promotion; // 0=None, 1=queen, 2=rook, 3=knight, 4=bishop
 
     ChessAction() = default;
-    ChessAction(T r1, T c1, T r2, T c2, T promotion) 
+    ChessAction(T r1, T c1, T r2, T c2, T promotion)
         : r1(r1), c1(c1), r2(r2), c2(c2), promotion(promotion) {}
 };
 

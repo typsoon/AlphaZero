@@ -13,8 +13,7 @@
 
 using std::vector;
 
-Connect4::Connect4(torch::Device device)
-    : device(device), board(), currentPlayer(1), finished(false), _reward(0.0f) {}
+Connect4::Connect4() : board(), currentPlayer(1), finished(false), _reward(0.0f) {}
 
 static int determine_current_player(const Connect4::board_t &board) {
     int player1_count = 0;
@@ -49,12 +48,12 @@ static Connect4::board_t vector_to_board_t(const std::vector<std::vector<int>> &
     return b;
 }
 
-Connect4::Connect4(const std::vector<std::vector<int>> &initial_board, torch::Device device)
-    : Connect4(vector_to_board_t(initial_board), device) {}
+Connect4::Connect4(const std::vector<std::vector<int>> &initial_board)
+    : Connect4(vector_to_board_t(initial_board)) {}
 
-Connect4::Connect4(const board_t &initial_board, torch::Device device)
-    : device(device), board(initial_board), currentPlayer(determine_current_player(initial_board)),
-      finished(false), _reward(0.0f) {
+Connect4::Connect4(const board_t &initial_board)
+    : board(initial_board), currentPlayer(determine_current_player(initial_board)), finished(false),
+      _reward(0.0f) {
 
     // Evaluate terminal state using the new static functions
     if (hasWin(board, currentPlayer)) {

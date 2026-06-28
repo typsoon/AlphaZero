@@ -45,8 +45,8 @@ class MCTS {
                         std::pmr::memory_resource *pool);
 
     std::vector<std::pair<int, float>> get_policy_from_logits(const inference_result &res,
-                                              const std::vector<int> &legal_actions,
-                                              bool dirichletNoise = false) const;
+                                                              const std::vector<int> &legal_actions,
+                                                              bool dirichletNoise = false) const;
 
     static std::vector<float> sample_dirichlet(const std::vector<float> &alpha);
 };

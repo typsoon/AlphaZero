@@ -41,9 +41,8 @@ PYBIND11_MODULE(engine_bind, m) {
             .def_readonly_static("COLS", &Game2D<6, 7>::COLS);
 
         py::class_<Connect4, Game2D<6, 7>, std::shared_ptr<Connect4>>(m, "Connect4")
-            .def(py::init<torch::Device>(), py::arg("device") = torch::Device("cpu"))
-            .def(py::init<const std::vector<std::vector<int>> &, torch::Device>(),
-                 py::arg("initial_board"), py::arg("device") = torch::Device("cpu"))
+            .def(py::init<>())
+            .def(py::init<const std::vector<std::vector<int>> &>(), py::arg("initial_board"))
             .def_readonly_static("action_dim", &Connect4::action_dim)
             .def_property_readonly_static("state_dim", [](py::object /* self */) {
                 return Connect4::state_dim; // or use Connect4::state_dim

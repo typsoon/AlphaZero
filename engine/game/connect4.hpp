@@ -21,10 +21,9 @@ class Connect4 : public Game2D<6, 7> {
     static bool isBoardFull(const board_t &board);
     static bool isBoardFull(const std::vector<std::vector<int>> &board);
 
-    Connect4(torch::Device device = torch::Device("cpu"));
-    Connect4(const board_t &initial_board, torch::Device device = torch::Device("cpu"));
-    Connect4(const std::vector<std::vector<int>> &initial_board,
-             torch::Device device = torch::Device("cpu"));
+    Connect4();
+    Connect4(const board_t &initial_board);
+    Connect4(const std::vector<std::vector<int>> &initial_board);
     ~Connect4() override = default;
 
     void reset() override;
@@ -43,7 +42,6 @@ class Connect4 : public Game2D<6, 7> {
 
   private:
     void reset_initial_state();
-    torch::Device device;
 
     bool checkWin(int row, int col) const;
     bool checkDirection(int row, int col, int dRow, int dCol) const;

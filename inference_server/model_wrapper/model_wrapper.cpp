@@ -37,7 +37,7 @@ class Connect4ModelWrapper final : public ModelWrapper {
             }
         }
 
-        Connect4 game(board, device);
+        Connect4 game(board);
 
         auto start = std::chrono::high_resolution_clock::now();
         const auto [policy, value] = mcts.search(game, search_depth, batch_size);
