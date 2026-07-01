@@ -4,7 +4,6 @@
 #include "../model_wrapper/model_wrapper.hpp"
 #include "../schema_validator/schema_validator.hpp"
 
-#include <exception>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -78,6 +77,51 @@ TEST(ModelWrapperTestGroup, ValidInferenceReturnsJSON) {
     CHECK_EQUAL(7, result_json["policy"].size());
 }
 
+TEST(ModelWrapperTestGroup, EncodePayloadDense) {
+    std::vector<float> policy = {0.1f, 0.2f, 0.0f, 0.7f, 0.0f, 0.0f, 0.0f};
+    float value = 0.5f;
+
+    std::string encoded = wrapper->encode_payload(policy, value);
+    auto encoded_json = nlohmann::json::parse(encoded);
+
+    CHECK_TRUE(encoded_json.contains("policy"));
+    CHECK_TRUE(encoded_json["policy"].is_array());
+    CHECK_EQUAL(7, encoded_json["policy"].size());
+    CHECK_EQUAL(0.2f, encoded_json["policy"][1].get<float>());
+    CHECK_EQUAL(0.5f, encoded_json["value"].get<float>());
+}
+
+TEST_GROUP(ChessModelWrapperTestGroup) {
+    std::shared_ptr<ModelWrapper> wrapper;
+
+    void setup() {
+        std::string model_path =
+            std::string(ALPHAZERO_REPO_ROOT) + "/inference_server/tests/payloads/dummy_model.pt";
+        wrapper = create_chess_model_wrapper(model_path, "cpu", 800, 32);
+    }
+
+    void teardown() {}
+};
+
+TEST(ChessModelWrapperTestGroup, EncodePayloadSparse) {
+    std::vector<float> policy(20480, 0.0f);
+    policy[5] = 0.1f;
+    policy[100] = 0.9f;
+    float value = -0.3f;
+
+    std::string encoded = wrapper->encode_payload(policy, value);
+    auto encoded_json = nlohmann::json::parse(encoded);
+
+    CHECK_TRUE(encoded_json.contains("policy"));
+    CHECK_TRUE(encoded_json["policy"].is_array());
+    CHECK_EQUAL(2, encoded_json["policy"].size());
+    CHECK_EQUAL(5, encoded_json["policy"][0]["index"].get<int>());
+    CHECK_EQUAL(0.1f, encoded_json["policy"][0]["value"].get<float>());
+    CHECK_EQUAL(100, encoded_json["policy"][1]["index"].get<int>());
+    CHECK_EQUAL(0.9f, encoded_json["policy"][1]["value"].get<float>());
+    CHECK_EQUAL(-0.3f, encoded_json["value"].get<float>());
+}
+
 TEST(ModelWrapperTestGroup, MixedInferenceDevicesDontCrash) {
     if (!torch::cuda::is_available()) {
         return; // Can't test if no CUDA
@@ -129,7 +173,7 @@ TEST(ArgsParserTestGroup, DefaultValues) {
     CHECK_TRUE(result);
     CHECK_EQUAL("model.pt", args.network_path);
     CHECK_EQUAL("cuda", args.device);
-    CHECK_TRUE(args.socket.find("/tmp/alphazero-inference-AZ123/model/") == 0);
+    CHECK_TRUE(args.socket.find("/tmp/alphazero-inference-AZ123/connect4/model/") == 0);
     CHECK_EQUAL(800, args.mcts_search_depth);
 }
 

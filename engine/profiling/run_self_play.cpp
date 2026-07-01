@@ -4,12 +4,14 @@
 #include "../../training/self_play.hpp"
 #include <iostream>
 #include <memory>
+#include <set>
 #include <string>
+#include <torch/csrc/autograd/profiler_kineto.h>
 
 int main(int argc, char *argv[]) {
     if (argc < 5) {
         std::cerr << "Usage: " << argv[0]
-                  << " <game> <network_path> <num_games> <thread_count> [max_moves]\n";
+                  << " <game> <network_path> <num_games> <thread_count> [max_moves] [kineto_out]\n";
         return 1;
     }
 
@@ -22,10 +24,26 @@ int main(int argc, char *argv[]) {
         max_moves = std::stoi(argv[5]);
     }
 
+    bool use_kineto = (argc >= 7);
+    std::string kineto_out_file = "";
+    if (use_kineto) {
+        kineto_out_file = argv[6];
+        torch::profiler::impl::ProfilerConfig config(torch::profiler::impl::ProfilerState::KINETO,
+                                                     false, // report_input_shapes
+                                                     false, // profile_memory
+                                                     false, // with_stack
+                                                     false, // with_flops
+                                                     false  // with_modules
+        );
+        std::set<torch::profiler::impl::ActivityType> activities = {
+            torch::profiler::impl::ActivityType::CPU, torch::profiler::impl::ActivityType::CUDA};
+        torch::autograd::profiler::prepareProfiler(config, activities);
+        torch::autograd::profiler::enableProfiler(config, activities);
+    }
+
     std::shared_ptr<Game> initial_game;
     if (game_name == "connect4") {
-        auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
-        initial_game = std::make_shared<Connect4>(device);
+        initial_game = std::make_shared<Connect4>();
     } else if (game_name == "chess") {
         initial_game = std::make_shared<Chess>();
     } else {
@@ -40,6 +58,12 @@ int main(int argc, char *argv[]) {
 
     self_play(initial_game, network_path, replay_buffer, num_games, thread_count, 800, 32,
               max_moves);
+
+    if (use_kineto) {
+        auto profiler_result = torch::autograd::profiler::disableProfiler();
+        profiler_result->save(kineto_out_file);
+        std::cout << "Kineto profile saved to " << kineto_out_file << '\n';
+    }
 
     std::cout << "Profiling completed." << '\n';
     return 0;

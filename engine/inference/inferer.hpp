@@ -9,7 +9,7 @@ struct inference_result {
     int row_index;
     float value;
 
-    inline float operator[](int action_index) const {
+    float operator[](int action_index) const {
         return batch_policy.data_ptr<float>()[row_index * batch_policy.size(1) + action_index];
     }
 };

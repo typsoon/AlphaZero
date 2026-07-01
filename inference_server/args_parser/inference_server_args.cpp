@@ -75,8 +75,10 @@ void print_inference_server_usage(const char *program_name) {
                  "(required)\n"
               << "  --device <device>       Device to run inference on (default: "
                  "cuda)\n"
+              << "  --game <game>           Game name for default socket path (default: "
+                 "connect4)\n"
               << "  --socket <path>         Unix socket path (default: "
-                 "/tmp/alphazero-inference-AZ123/<network_name>/<uuid>.sock)\n"
+                 "/tmp/alphazero-inference-AZ123/<game>/<network_name>/<uuid>.sock)\n"
               << "  --mcts-search-depth <depth> MCTS search depth (default: 800)\n"
               << "  -h, --help              Show this help message\n";
 }
@@ -97,6 +99,9 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
             continue;
         }
         if (read_option_value(i, argc, argv, arg, "--device", args.device, error)) {
+            continue;
+        }
+        if (read_option_value(i, argc, argv, arg, "--game", args.game, error)) {
             continue;
         }
         if (read_option_value(i, argc, argv, arg, "--socket", args.socket, error)) {
@@ -135,8 +140,8 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
     if (args.socket.empty()) {
         std::filesystem::path net_path(args.network_path);
         std::string network_name = net_path.stem().string();
-        args.socket =
-            "/tmp/alphazero-inference-AZ123/" + network_name + "/" + generate_uuid() + ".sock";
+        args.socket = "/tmp/alphazero-inference-AZ123/" + args.game + "/" + network_name + "/" +
+                      generate_uuid() + ".sock";
     }
 
     return true;

@@ -1,0 +1,45 @@
+{
+  "$id": "alphazero:game-state:chess",
+  "type": "object",
+  "required": [
+    "board",
+    "player",
+    "en_passant",
+    "castling"
+  ],
+  "properties": {
+    "board": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "array",
+        "minItems": 8,
+        "maxItems": 8,
+        "items": {
+          "type": "integer",
+          "minimum": -6,
+          "maximum": 6
+        }
+      }
+    },
+    "player": {
+      "type": "integer",
+      "enum": [0, 1]
+    },
+    "en_passant": {
+      "type": "integer",
+      "minimum": -1,
+      "maximum": 7
+    },
+    "castling": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "integer"
+      }
+    }
+  },
+  "additionalProperties": false
+}

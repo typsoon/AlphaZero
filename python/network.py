@@ -1,5 +1,7 @@
+from os import PathLike, fspath
 from typing import Tuple
 import torch
+
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -75,7 +77,7 @@ class AlphaZeroNetwork(nn.Module):
         """
         return self.forward(X)
 
-    def save_az_network(self, path: str):
+    def save_az_network(self, path: PathLike):
         torch.save(
             {
                 "model_state_dict": self.state_dict(),
@@ -88,17 +90,50 @@ class AlphaZeroNetwork(nn.Module):
                     "num_filters": self.conv_in.out_channels,
                 },
             },
-            path,
+            fspath(path),
         )
 
-    def script_and_save_network(self, path: str):
+    def script_and_save_network(self, path: PathLike):
         scripted_model = torch.jit.script(self)
+        scripted_model.save(fspath(path))
 
-        scripted_model.save(path)
+    def tensorrt_and_save_network(self, path: PathLike, max_first_dim_of_input=8192):
+        # This has to be imported in order to load tensorrt networks
+        import torch_tensorrt  # noqa: F811
+
+        # TensorRT compilation requires eval mode and cuda
+        self.eval()
+        if not next(self.parameters()).is_cuda:
+            self.cuda()
+
+        # We need to provide input shape constraints for dynamic batch sizes
+        # Typical batch size is between 1 and 128
+        inputs = [
+            torch_tensorrt.Input(
+                min_shape=[1, self.conv_in.in_channels, self._height, self._width],
+                opt_shape=[32, self.conv_in.in_channels, self._height, self._width],
+                max_shape=[
+                    max_first_dim_of_input,
+                    self.conv_in.in_channels,
+                    self._height,
+                    self._width,
+                ],
+                dtype=torch.float32,
+            )
+        ]
+
+        scripted_model = torch.jit.script(self)
+        trt_model = torch_tensorrt.compile(
+            scripted_model,
+            inputs=inputs,
+            enabled_precisions={torch.float32},
+            ir="torchscript",
+        )
+        trt_model.save(path)
 
     @staticmethod
-    def load_az_network(path: str, device: torch.device) -> "AlphaZeroNetwork":
-        checkpoint = torch.load(path, map_location=device, weights_only=True)
+    def load_az_network(path: PathLike, device: torch.device) -> "AlphaZeroNetwork":
+        checkpoint = torch.load(fspath(path), map_location=device, weights_only=True)
         model = AlphaZeroNetwork(**checkpoint["init_args"])
         model = model.to(device)
         model.load_state_dict(checkpoint["model_state_dict"])

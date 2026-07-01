@@ -13,7 +13,7 @@ TEST(ChessTests, InitialMoves) {
 
     bool found_e4 = false;
     for (int act : actions) {
-        ChessAction ca = game.decode_action(act);
+        ChessAction ca = Chess::decode_action(act);
         if (ca.r1 == 6 && ca.c1 == 4 && ca.r2 == 4 && ca.c2 == 4) {
             game.step(act);
             found_e4 = true;
@@ -36,7 +36,7 @@ TEST(ChessTests, Castling) {
     auto actions = game.get_legal_actions();
     bool found_castle = false;
     for (int act : actions) {
-        ChessAction ca = game.decode_action(act);
+        ChessAction ca = Chess::decode_action(act);
         if (ca.r1 == 7 && ca.c1 == 4 && ca.r2 == 7 && ca.c2 == 6) {
             found_castle = true;
             break;
@@ -59,7 +59,7 @@ TEST(ChessTests, EnPassant) {
     auto actions = game.get_legal_actions();
     bool found_ep = false;
     for (int act : actions) {
-        ChessAction ca = game.decode_action(act);
+        ChessAction ca = Chess::decode_action(act);
         if (ca.r1 == 3 && ca.c1 == 4 && ca.r2 == 2 && ca.c2 == 3) {
             found_ep = true;
             game.step(act);
@@ -82,7 +82,7 @@ TEST(ChessTests, Promotion) {
     auto actions = game.get_legal_actions();
     bool found_promo = false;
     for (int act : actions) {
-        ChessAction ca = game.decode_action(act);
+        ChessAction ca = Chess::decode_action(act);
         if (ca.r1 == 1 && ca.c1 == 0 && ca.r2 == 0 && ca.c2 == 0 && ca.promotion == 1) {
             found_promo = true;
             game.step(act);
@@ -138,7 +138,7 @@ TEST(ChessTests, CanonicalState) {
 
     auto board = game.get_board_state();
     game.set_custom_state(board, 1);
-    game.write_canonical_state(buffer);
+    game.write_canonical_state(buffer); // NOLINT
 
     for (int i = 0; i < 64; ++i) {
         CHECK_EQUAL(0.0f, buffer[12 * 64 + i]);
@@ -172,7 +172,7 @@ TEST(ChessTests, KingInCheck) {
 
     int valid_moves = 0;
     for (int act : actions) {
-        ChessAction ca = game.decode_action(act);
+        ChessAction ca = Chess::decode_action(act);
         // No pawn moves should be valid because d2-d3 or d2-d4 does not block the e-file or capture
         // the rook.
         CHECK_TRUE(ca.r1 != 6 || ca.c1 != 3);
@@ -219,7 +219,7 @@ TEST(ChessTests, KingNotInCheckButPiecePinned) {
     auto actions = game.get_legal_actions();
 
     for (int act : actions) {
-        ChessAction ca = game.decode_action(act);
+        ChessAction ca = Chess::decode_action(act);
         // The knight is absolutely pinned by the rook. It cannot move at all.
         if (ca.r1 == 6 && ca.c1 == 4) {
             FAIL("Pinned knight generated a move!");
@@ -230,4 +230,79 @@ TEST(ChessTests, KingNotInCheckButPiecePinned) {
 int main(int ac, char **av) {
     MemoryLeakWarningPlugin::turnOffNewDeleteOverloads();
     return CommandLineTestRunner::RunAllTests(ac, av);
+}
+
+TEST(ChessTests, KnightCheckingKing) {
+    spdlog::info("Testing available moves when king is checked by a knight...");
+    Chess game;
+    Chess::board_t b;
+    for (int i = 0; i < 8; ++i) {
+        for (int j = 0; j < 8; ++j) {
+            b[i][j] = EMPTY;
+        }
+    }
+    // White king at e1
+    b[7][4] = W_KING;
+    // Black knight at d3 checking the king
+    b[5][3] = B_KNIGHT;
+
+    // White rook at h1, could capture something if not in check
+    b[7][7] = W_ROOK;
+    // White pawn at c2, can capture the knight at d3
+    b[6][2] = W_PAWN;
+
+    game.set_custom_state(b, 0);
+    auto actions = game.get_legal_actions();
+
+    int valid_moves = 0;
+    for (int act : actions) {
+        ChessAction ca = Chess::decode_action(act);
+
+        // Rook cannot move, because it doesn't resolve the knight check
+        if (ca.r1 == 7 && ca.c1 == 7) {
+            FAIL("Rook generated a move while in knight check!");
+        }
+
+        // Pawn capturing the knight
+        if (ca.r1 == 6 && ca.c1 == 2) {
+            CHECK_TRUE(ca.r2 == 5 && ca.c2 == 3);
+            valid_moves++;
+        }
+
+        // King running away (d1, d2, e2, f1). f2 is attacked by the knight!
+        if (ca.r1 == 7 && ca.c1 == 4) {
+            valid_moves++;
+        }
+    }
+    // Pawn capture (1) + King moves (4) = 5 moves
+    CHECK_EQUAL(5, valid_moves);
+}
+
+TEST(ChessTests, BishopPinningPiece) {
+    spdlog::info("Testing piece pinned by a bishop...");
+    Chess game;
+    Chess::board_t b;
+    for (int i = 0; i < 8; ++i) {
+        for (int j = 0; j < 8; ++j) {
+            b[i][j] = EMPTY;
+        }
+    }
+    // White king at h1
+    b[7][7] = W_KING;
+    // White rook at g2
+    b[6][6] = W_ROOK;
+    // Black bishop at a8 pinning the rook
+    b[0][0] = B_BISHOP;
+
+    game.set_custom_state(b, 0);
+    auto actions = game.get_legal_actions();
+
+    for (int act : actions) {
+        ChessAction ca = Chess::decode_action(act);
+        if (ca.r1 == 6 && ca.c1 == 6) {
+            // Rook is pinned diagonally, but rooks can only move orthogonally.
+            // Therefore, the pinned rook CANNOT move at all.
+            FAIL("Orthogonal piece moved while diagonally pinned!");
+        }
+    }
 }

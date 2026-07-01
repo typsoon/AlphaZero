@@ -1,5 +1,6 @@
 import shutil
 import sys
+from python.checkpoint_manager import CheckpointManager
 from python.utils import PROJ_ROOT, BUILD_DIR
 from doit_systemd import *  # noqa: F403
 
@@ -18,6 +19,8 @@ GLOBAL_EXCLUDES = [
     "vcpkg_installed",
 ]
 
+SUPPORTED_GAMES = (("connect4", "Connect4"), ("chess", "Chess"))
+
 NETWORK_PARAM = {
     "name": "network_path",
     "long": "network_path",
@@ -29,8 +32,23 @@ NETWORK_PARAM = {
 
 def resolve_network_path(network_path, game="connect4"):
     if not network_path:
+        game_dir = PROJ_ROOT / "checkpoints" / game
+        file_name = f"{game}_AZNetwork_0.pt_trt"
+
+        trt_path = game_dir / CheckpointManager.tensorrt_dir_name / file_name
+        if trt_path.exists():
+            return str(trt_path)
+
+        scripted_path = game_dir / CheckpointManager.scripted_dir_name / file_name
+        if scripted_path.exists():
+            return str(scripted_path)
+
         return str(
-            PROJ_ROOT / "checkpoints" / game / "scripted" / "AZNetwork_0.pt_scripted"
+            PROJ_ROOT
+            / "checkpoints"
+            / game
+            / "scripted"
+            / f"{game}_AZNetwork_0.pt_scripted"
         )
     return network_path
 
@@ -46,6 +64,69 @@ def run_protected(cmd):
         # Give the child process (like perf) a chance to handle SIGINT and flush data
         p.wait()
     return p.returncode == 0
+
+
+def task_patch_torchtrt():
+    """Patch libtorchtrt.so's RUNPATH so C++ binaries can load TensorRT without LD_LIBRARY_PATH.
+
+    torch-tensorrt is built with Bazel and ships with broken $ORIGIN-relative RUNPATH entries
+    that don't resolve after pip install. Since it uses DT_RUNPATH (not DT_RPATH), the parent
+    executable's RPATH cannot compensate. This task appends the real library directories to
+    libtorchtrt.so's own RUNPATH using patchelf, making it work from any context.
+    """
+    import subprocess as _sp
+    import sys as _sys
+
+    def do_patch():
+        try:
+            result = _sp.run(
+                [
+                    _sys.executable,
+                    "-c",
+                    "import torch_tensorrt, nvidia, os, sys; "
+                    "trt = os.path.join(os.path.dirname(torch_tensorrt.__file__), 'lib', 'libtorchtrt.so'); "
+                    "trt_libs = os.path.join(os.path.dirname(os.path.dirname(torch_tensorrt.__file__)), 'tensorrt_libs'); "
+                    "cuda_lib = os.path.join(nvidia.__path__[0], 'cuda_runtime', 'lib'); "
+                    "torch_lib = os.path.realpath(os.path.join(os.path.dirname(torch_tensorrt.__file__), '..', 'torch', 'lib')); "
+                    "print(trt + ':' + trt_libs + ':' + cuda_lib + ':' + torch_lib)",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                print("torch_tensorrt not found, skipping patch")
+                return True
+            # Take the last colon-bearing line (ignore TRT logger noise on stdout)
+            line = [
+                line
+                for line in result.stdout.strip().splitlines()
+                if line.count(":") >= 3
+            ][-1]
+            libtorchtrt, trt_libs, cuda_lib, torch_lib = line.split(":", 3)
+        except Exception as e:
+            print(f"Could not locate torch_tensorrt libraries: {e}")
+            return True  # soft failure — TRT simply not installed
+
+        rpath_to_add = f"{trt_libs}:{cuda_lib}:{torch_lib}"
+
+        # Idempotency: skip if already patched
+        check = _sp.run(
+            ["patchelf", "--print-rpath", libtorchtrt], capture_output=True, text=True
+        )
+        if trt_libs in check.stdout:
+            print("libtorchtrt.so already patched, skipping")
+            return True
+
+        print(f"Patching {libtorchtrt}")
+        print(f"  Adding RPATH: {rpath_to_add}")
+        r = _sp.run(["patchelf", "--add-rpath", rpath_to_add, libtorchtrt])
+        return r.returncode == 0
+
+    return {
+        "actions": [do_patch],
+        "verbosity": 2,
+        "uptodate": [False],  # always re-check; the action itself is idempotent
+    }
 
 
 def with_report(cmd):
@@ -106,9 +187,7 @@ def get_clang_tidy_cmd(args):
     fd_bin = shutil.which("fd") or shutil.which("fdfind")
     if fd_bin:
         excludes_str = " ".join([f"-E {e}" for e in excludes])
-        return (
-            f"{fd_bin} -e cpp -e h -e hpp {excludes_str} -x clang-tidy -p build {args}"
-        )
+        return f"{fd_bin} -j 4 -e cpp -e h -e hpp {excludes_str} -x clang-tidy -p build {args}"
     else:
         excludes_find = " -o ".join([f"-name {e}" for e in excludes])
         find_cmd = f"find . -type d \\( {excludes_find} \\) -prune -o -type f \\( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \\) -print"
@@ -156,7 +235,11 @@ def task_lint():
     }
     yield {
         "name": "cpp",
-        "actions": [with_report(get_clang_tidy_cmd(""))],
+        "actions": [
+            with_report(
+                f"{sys.executable} {PROJ_ROOT}/python/utils/clang_tidy_cached.py {PROJ_ROOT} {BUILD_DIR}"
+            )
+        ],
         "task_dep": ["build"],
     }
     yield {
@@ -281,7 +364,7 @@ def task_build():
                 "help": "Build type (debug or release)",
             }
         ],
-        "task_dep": ["setup_vcpkg"],
+        "task_dep": ["setup_vcpkg", "patch_torchtrt"],
     }
 
 
@@ -326,7 +409,7 @@ def task_check_all():
             "lint:python",
             "lint:cmake",
             "lint:ts",
-            # "lint:cpp", # Removed because it takes too long to run on every check_all
+            "lint:cpp",
             "validate_connect4_puzzles",
             "test_cpp",
             "test_python",
@@ -405,6 +488,32 @@ def task_benchmark_batch_size():
     }
 
 
+def task_run_inference_server():
+    """Run the inference server directly from the terminal."""
+    inference_bin = BUILD_DIR / "inference_server" / "inference_server"
+
+    def run_server(network_path, game):
+        network_path = resolve_network_path(network_path, game)
+        cmd = f"{inference_bin} --network-path {network_path} --game {game}"
+        return run_protected(cmd)
+
+    return {
+        "actions": [run_server],
+        "params": [
+            {
+                "name": "game",
+                "long": "game",
+                "type": str,
+                "default": "connect4",
+                "help": "The game to run inference for",
+                "choices": SUPPORTED_GAMES,
+            },
+            NETWORK_PARAM,
+        ],
+        "task_dep": ["build"],
+    }
+
+
 def task_clear_db():
     """Clear the games database by removing the SQLite files."""
     return {
@@ -422,8 +531,8 @@ def _get_profile_params(default_num_games: int, default_thread_count: int) -> li
             "long": "game",
             "type": str,
             "default": "connect4",
-            "help": "Game to profile",
-            "choices": (("connect4", "Connect4"), ("chess", "Chess")),
+            "help": "The game to run inference for",
+            "choices": SUPPORTED_GAMES,
         },
         NETWORK_PARAM,
         {
@@ -487,4 +596,47 @@ def task_profile_self_play_perf():
         ],
         "params": _get_profile_params(default_num_games=10, default_thread_count=4),
         "task_dep": ["setup_vcpkg"],
+    }
+
+
+def task_profile_self_play_kineto():
+    """Run a profiler on the self_play execution using PyTorch Kineto."""
+    profiling_bin = BUILD_DIR / "engine" / "profiling" / "run_self_play"
+
+    def run_kineto(game, network_path, num_games, thread_count, max_moves):
+        network_path = resolve_network_path(network_path, game)
+        out_file = "pytorch_profile.json"
+        cmd = f"{profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves} {out_file}"
+        return run_protected(cmd)
+
+    return {
+        "actions": [
+            f"cmake --build {BUILD_DIR} --target run_self_play -j$(nproc)",
+            run_kineto,
+            "echo '\\033[32mProfile saved to pytorch_profile.json. Open chrome://tracing or ui.perfetto.dev to view it.\\033[0m'",
+        ],
+        "params": _get_profile_params(default_num_games=2, default_thread_count=1),
+        "task_dep": ["setup_vcpkg"],
+    }
+
+
+def task_generate_tensorrt_models():
+    """Iterate through available checkpoints and generate TensorRT scripted models."""
+
+    def run_generate(max_first_dim):
+        cmd = f"{sys.executable} -m python.tools.generate_tensorrt_models --max_first_dim {max_first_dim}"
+        return run_protected(cmd)
+
+    return {
+        "actions": [run_generate],
+        "params": [
+            {
+                "name": "max_first_dim",
+                "long": "max_first_dim",
+                "type": int,
+                "default": 8192,
+                "help": "Max first dim of input (max TensorRT batch size)",
+            }
+        ],
+        "verbosity": 2,
     }

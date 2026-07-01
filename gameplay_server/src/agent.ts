@@ -1,5 +1,7 @@
 import http from 'node:http';
 
+const INFERENCE_TIMEOUT_MS = 300_000; // 5 minutes – MCTS on CPU can take ~90s for chess
+
 export class AlphaZeroAgent {
   private socketPath: string;
 
@@ -31,19 +33,34 @@ export class AlphaZeroAgent {
             if (!Array.isArray(data.policy)) {
               reject(
                 new Error(
-                  data.message || 'Invalid response from inference server',
+                  data.error ||
+                    data.message ||
+                    'Invalid response from inference server',
                 ),
               );
               return;
             }
-            const policy: number[] = data.policy;
+            const policy = data.policy;
             let bestMove = 0;
             let bestValue = -Infinity;
-            for (let i = 0; i < policy.length; i++) {
-              const val = policy[i] as number;
-              if (val > bestValue) {
-                bestValue = val;
-                bestMove = i;
+
+            if (policy.length > 0 && typeof policy[0] === 'object') {
+              // Sparse policy array: [{index, value}, ...]
+              for (let i = 0; i < policy.length; i++) {
+                const item = policy[i];
+                if (item.value > bestValue) {
+                  bestValue = item.value;
+                  bestMove = item.index;
+                }
+              }
+            } else {
+              // Dense policy array
+              for (let i = 0; i < policy.length; i++) {
+                const val = policy[i] as number;
+                if (val > bestValue) {
+                  bestValue = val;
+                  bestMove = i;
+                }
               }
             }
             resolve(bestMove);
@@ -53,7 +70,21 @@ export class AlphaZeroAgent {
         });
       });
 
+      req.setTimeout(INFERENCE_TIMEOUT_MS, () => {
+        req.destroy(
+          new Error(
+            `Inference server timed out after ${INFERENCE_TIMEOUT_MS / 1000}s`,
+          ),
+        );
+      });
+
       req.on('error', (e) => {
+        console.error(
+          'Inference request failed',
+          e,
+          'socket:',
+          this.socketPath,
+        );
         reject(e);
       });
 

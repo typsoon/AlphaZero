@@ -3,10 +3,9 @@
 #include "bitboard.hpp"
 #include <cmath>
 #include <iostream>
-#include <set>
 
 Chess::Chess() {
-    reset();
+    Chess::reset();
 }
 
 static constexpr Chess::board_t INITIAL_BOARD = {
@@ -40,18 +39,15 @@ bool Chess::is_white(int8_t p) {
 bool Chess::is_black(int8_t p) {
     return p < 0;
 }
-bool Chess::is_empty(int8_t p) {
-    return p == 0;
-}
 
-int Chess::encode_action(const ChessAction<> &a) const {
+int Chess::encode_action(const ChessAction<> &a) {
     int from = (a.r1 * 8) + a.c1;
     int to = (a.r2 * 8) + a.c2;
     return (from * 64 + to) * 5 + a.promotion;
 }
 
-ChessAction<> Chess::decode_action(int a) const {
-    ChessAction<> act;
+ChessAction<> Chess::decode_action(int a) {
+    ChessAction<> act{};
     act.promotion = a % 5;
     a /= 5;
     auto to = a % 64;
@@ -71,6 +67,7 @@ int Chess::getActionSize() const {
 std::vector<int> Chess::get_legal_actions() const {
     auto acts = actions();
     std::vector<int> res;
+    res.reserve(acts.size());
     for (const auto &a : acts) {
         res.push_back(encode_action(a));
     }
@@ -92,6 +89,8 @@ void Chess::step(int action) {
         break;
     case 4:
         promo = (player == 0) ? W_BISHOP : B_BISHOP;
+        break;
+    default:
         break;
     }
     move_piece(a.r1, a.c1, a.r2, a.c2, promo);
@@ -200,7 +199,7 @@ Chess::board_t Chess::get_board_state() const {
 }
 
 void Chess::write_canonical_state(float *out_buffer) const {
-    std::fill(out_buffer, out_buffer + 19 * 64, 0.0f);
+    std::fill(out_buffer, out_buffer + 19 * 64, 0.0f); // NOLINT
 
     bool p1_k_castle = (player == 0) ? (k_move_count == 0 && r2_move_count == 0)
                                      : (K_move_count == 0 && R2_move_count == 0);
@@ -237,181 +236,170 @@ std::vector<int64_t> Chess::get_state_shape() const {
     return {19, 8, 8};
 }
 
-std::pair<std::vector<Chess::pos_t>, std::vector<Chess::pos_t>>
-Chess::move_rules_P(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
-    std::vector<pos_t> threats;
+void Chess::move_rules_P(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    if (i - 1 >= 0 && i - 1 <= 7 && j + 1 >= 0 && j + 1 <= 7)
-        threats.emplace_back(i - 1, j + 1);
-    if (i - 1 >= 0 && i - 1 <= 7 && j - 1 >= 0 && j - 1 <= 7)
-        threats.emplace_back(i - 1, j - 1);
     if (i == 6) {
         if (board_state[i - 1][j] == EMPTY) {
-            next_positions.emplace_back(i - 1, j);
+            moves.emplace_back(i - 1, j);
             if (board_state[i - 2][j] == EMPTY)
-                next_positions.emplace_back(i - 2, j);
+                moves.emplace_back(i - 2, j);
         }
     } else if (i == 3 && en_passant != -1) {
         if (j - 1 == en_passant && std::abs(en_passant_move - move_count) == 1)
-            next_positions.emplace_back(i - 1, j - 1);
+            moves.emplace_back(i - 1, j - 1);
         else if (j + 1 == en_passant && std::abs(en_passant_move - move_count) == 1)
-            next_positions.emplace_back(i - 1, j + 1);
+            moves.emplace_back(i - 1, j + 1);
     }
     if ((i == 1 || i == 2 || i == 3 || i == 4 || i == 5) && board_state[i - 1][j] == EMPTY)
-        next_positions.emplace_back(i - 1, j);
-    if (j == 0 && is_black(board_state[i - 1][j + 1]))
-        next_positions.emplace_back(i - 1, j + 1);
-    else if (j == 7 && is_black(board_state[i - 1][j - 1]))
-        next_positions.emplace_back(i - 1, j - 1);
-    else if (j >= 1 && j <= 6) {
+        moves.emplace_back(i - 1, j);
+    if (j == 0 && is_black(board_state[i - 1][j + 1])) {
+        moves.emplace_back(i - 1, j + 1);
+    } else if (j == 7 && is_black(board_state[i - 1][j - 1])) {
+        moves.emplace_back(i - 1, j - 1);
+    } else if (j >= 1 && j <= 6) {
         if (is_black(board_state[i - 1][j + 1]))
-            next_positions.emplace_back(i - 1, j + 1);
+            moves.emplace_back(i - 1, j + 1);
         if (is_black(board_state[i - 1][j - 1]))
-            next_positions.emplace_back(i - 1, j - 1);
+            moves.emplace_back(i - 1, j - 1);
     }
-    return {next_positions, threats};
 }
 
-std::pair<std::vector<Chess::pos_t>, std::vector<Chess::pos_t>>
-Chess::move_rules_p(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
-    std::vector<pos_t> threats;
+void Chess::move_rules_p(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    if (i + 1 >= 0 && i + 1 <= 7 && j + 1 >= 0 && j + 1 <= 7)
-        threats.emplace_back(i + 1, j + 1);
-    if (i + 1 >= 0 && i + 1 <= 7 && j - 1 >= 0 && j - 1 <= 7)
-        threats.emplace_back(i + 1, j - 1);
     if (i == 1) {
         if (board_state[i + 1][j] == EMPTY) {
-            next_positions.emplace_back(i + 1, j);
+            moves.emplace_back(i + 1, j);
             if (board_state[i + 2][j] == EMPTY)
-                next_positions.emplace_back(i + 2, j);
+                moves.emplace_back(i + 2, j);
         }
     } else if (i == 4 && en_passant != -1) {
         if (j - 1 == en_passant && std::abs(en_passant_move - move_count) == 1)
-            next_positions.emplace_back(i + 1, j - 1);
+            moves.emplace_back(i + 1, j - 1);
         else if (j + 1 == en_passant && std::abs(en_passant_move - move_count) == 1)
-            next_positions.emplace_back(i + 1, j + 1);
+            moves.emplace_back(i + 1, j + 1);
     }
     if ((i == 2 || i == 3 || i == 4 || i == 5 || i == 6) && board_state[i + 1][j] == EMPTY)
-        next_positions.emplace_back(i + 1, j);
-    if (j == 0 && is_white(board_state[i + 1][j + 1]))
-        next_positions.emplace_back(i + 1, j + 1);
-    else if (j == 7 && is_white(board_state[i + 1][j - 1]))
-        next_positions.emplace_back(i + 1, j - 1);
-    else if (j >= 1 && j <= 6) {
+        moves.emplace_back(i + 1, j);
+    if (j == 0 && is_white(board_state[i + 1][j + 1])) {
+        moves.emplace_back(i + 1, j + 1);
+    } else if (j == 7 && is_white(board_state[i + 1][j - 1])) {
+        moves.emplace_back(i + 1, j - 1);
+    } else if (j >= 1 && j <= 6) {
         if (is_white(board_state[i + 1][j + 1]))
-            next_positions.emplace_back(i + 1, j + 1);
+            moves.emplace_back(i + 1, j + 1);
         if (is_white(board_state[i + 1][j - 1]))
-            next_positions.emplace_back(i + 1, j - 1);
+            moves.emplace_back(i + 1, j - 1);
     }
-    return {next_positions, threats};
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_r(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
+void Chess::move_rules_r(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    int a = i;
+    int8_t a = 0;
+    int8_t b = 0;
+
+    a = i;
     while (a != 0) {
         if (board_state[a - 1][j] != EMPTY) {
             if (is_white(board_state[a - 1][j]))
-                next_positions.emplace_back(a - 1, j);
+                moves.emplace_back(a - 1, j);
             break;
         }
-        next_positions.emplace_back(a - 1, j);
+        moves.emplace_back(a - 1, j);
         a -= 1;
     }
     a = i;
     while (a != 7) {
         if (board_state[a + 1][j] != EMPTY) {
             if (is_white(board_state[a + 1][j]))
-                next_positions.emplace_back(a + 1, j);
+                moves.emplace_back(a + 1, j);
             break;
         }
-        next_positions.emplace_back(a + 1, j);
+        moves.emplace_back(a + 1, j);
         a += 1;
     }
     a = j;
     while (a != 7) {
         if (board_state[i][a + 1] != EMPTY) {
             if (is_white(board_state[i][a + 1]))
-                next_positions.emplace_back(i, a + 1);
+                moves.emplace_back(i, a + 1);
             break;
         }
-        next_positions.emplace_back(i, a + 1);
+        moves.emplace_back(i, a + 1);
         a += 1;
     }
     a = j;
     while (a != 0) {
         if (board_state[i][a - 1] != EMPTY) {
             if (is_white(board_state[i][a - 1]))
-                next_positions.emplace_back(i, a - 1);
+                moves.emplace_back(i, a - 1);
             break;
         }
-        next_positions.emplace_back(i, a - 1);
+        moves.emplace_back(i, a - 1);
         a -= 1;
     }
-    return next_positions;
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_R(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
+void Chess::move_rules_R(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    int a = i;
+    int8_t a = 0;
+    int8_t b = 0;
+
+    a = i;
     while (a != 0) {
         if (board_state[a - 1][j] != EMPTY) {
             if (is_black(board_state[a - 1][j]))
-                next_positions.emplace_back(a - 1, j);
+                moves.emplace_back(a - 1, j);
             break;
         }
-        next_positions.emplace_back(a - 1, j);
+        moves.emplace_back(a - 1, j);
         a -= 1;
     }
     a = i;
     while (a != 7) {
         if (board_state[a + 1][j] != EMPTY) {
             if (is_black(board_state[a + 1][j]))
-                next_positions.emplace_back(a + 1, j);
+                moves.emplace_back(a + 1, j);
             break;
         }
-        next_positions.emplace_back(a + 1, j);
+        moves.emplace_back(a + 1, j);
         a += 1;
     }
     a = j;
     while (a != 7) {
         if (board_state[i][a + 1] != EMPTY) {
             if (is_black(board_state[i][a + 1]))
-                next_positions.emplace_back(i, a + 1);
+                moves.emplace_back(i, a + 1);
             break;
         }
-        next_positions.emplace_back(i, a + 1);
+        moves.emplace_back(i, a + 1);
         a += 1;
     }
     a = j;
     while (a != 0) {
         if (board_state[i][a - 1] != EMPTY) {
             if (is_black(board_state[i][a - 1]))
-                next_positions.emplace_back(i, a - 1);
+                moves.emplace_back(i, a - 1);
             break;
         }
-        next_positions.emplace_back(i, a - 1);
+        moves.emplace_back(i, a - 1);
         a -= 1;
     }
-    return next_positions;
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_b(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
+void Chess::move_rules_b(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    int a = i, b = j;
+    int8_t a = 0;
+    int8_t b = 0;
+
+    a = i;
+    b = j;
     while (a != 0 && b != 0) {
         if (board_state[a - 1][b - 1] != EMPTY) {
             if (is_white(board_state[a - 1][b - 1]))
-                next_positions.emplace_back(a - 1, b - 1);
+                moves.emplace_back(a - 1, b - 1);
             break;
         }
-        next_positions.emplace_back(a - 1, b - 1);
+        moves.emplace_back(a - 1, b - 1);
         a -= 1;
         b -= 1;
     }
@@ -420,10 +408,10 @@ std::vector<Chess::pos_t> Chess::move_rules_b(int8_t i, int8_t j) const {
     while (a != 7 && b != 7) {
         if (board_state[a + 1][b + 1] != EMPTY) {
             if (is_white(board_state[a + 1][b + 1]))
-                next_positions.emplace_back(a + 1, b + 1);
+                moves.emplace_back(a + 1, b + 1);
             break;
         }
-        next_positions.emplace_back(a + 1, b + 1);
+        moves.emplace_back(a + 1, b + 1);
         a += 1;
         b += 1;
     }
@@ -432,10 +420,10 @@ std::vector<Chess::pos_t> Chess::move_rules_b(int8_t i, int8_t j) const {
     while (a != 0 && b != 7) {
         if (board_state[a - 1][b + 1] != EMPTY) {
             if (is_white(board_state[a - 1][b + 1]))
-                next_positions.emplace_back(a - 1, b + 1);
+                moves.emplace_back(a - 1, b + 1);
             break;
         }
-        next_positions.emplace_back(a - 1, b + 1);
+        moves.emplace_back(a - 1, b + 1);
         a -= 1;
         b += 1;
     }
@@ -444,27 +432,29 @@ std::vector<Chess::pos_t> Chess::move_rules_b(int8_t i, int8_t j) const {
     while (a != 7 && b != 0) {
         if (board_state[a + 1][b - 1] != EMPTY) {
             if (is_white(board_state[a + 1][b - 1]))
-                next_positions.emplace_back(a + 1, b - 1);
+                moves.emplace_back(a + 1, b - 1);
             break;
         }
-        next_positions.emplace_back(a + 1, b - 1);
+        moves.emplace_back(a + 1, b - 1);
         a += 1;
         b -= 1;
     }
-    return next_positions;
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_B(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
+void Chess::move_rules_B(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    int a = i, b = j;
+    int8_t a = 0;
+    int8_t b = 0;
+
+    a = i;
+    b = j;
     while (a != 0 && b != 0) {
         if (board_state[a - 1][b - 1] != EMPTY) {
             if (is_black(board_state[a - 1][b - 1]))
-                next_positions.emplace_back(a - 1, b - 1);
+                moves.emplace_back(a - 1, b - 1);
             break;
         }
-        next_positions.emplace_back(a - 1, b - 1);
+        moves.emplace_back(a - 1, b - 1);
         a -= 1;
         b -= 1;
     }
@@ -473,10 +463,10 @@ std::vector<Chess::pos_t> Chess::move_rules_B(int8_t i, int8_t j) const {
     while (a != 7 && b != 7) {
         if (board_state[a + 1][b + 1] != EMPTY) {
             if (is_black(board_state[a + 1][b + 1]))
-                next_positions.emplace_back(a + 1, b + 1);
+                moves.emplace_back(a + 1, b + 1);
             break;
         }
-        next_positions.emplace_back(a + 1, b + 1);
+        moves.emplace_back(a + 1, b + 1);
         a += 1;
         b += 1;
     }
@@ -485,10 +475,10 @@ std::vector<Chess::pos_t> Chess::move_rules_B(int8_t i, int8_t j) const {
     while (a != 0 && b != 7) {
         if (board_state[a - 1][b + 1] != EMPTY) {
             if (is_black(board_state[a - 1][b + 1]))
-                next_positions.emplace_back(a - 1, b + 1);
+                moves.emplace_back(a - 1, b + 1);
             break;
         }
-        next_positions.emplace_back(a - 1, b + 1);
+        moves.emplace_back(a - 1, b + 1);
         a -= 1;
         b += 1;
     }
@@ -497,130 +487,56 @@ std::vector<Chess::pos_t> Chess::move_rules_B(int8_t i, int8_t j) const {
     while (a != 7 && b != 0) {
         if (board_state[a + 1][b - 1] != EMPTY) {
             if (is_black(board_state[a + 1][b - 1]))
-                next_positions.emplace_back(a + 1, b - 1);
+                moves.emplace_back(a + 1, b - 1);
             break;
         }
-        next_positions.emplace_back(a + 1, b - 1);
+        moves.emplace_back(a + 1, b - 1);
         a += 1;
         b -= 1;
     }
-    return next_positions;
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_n(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
+void Chess::move_rules_q(int8_t i, int8_t j, PosList &moves) const {
+    move_rules_r(i, j, moves);
+    move_rules_b(i, j, moves);
+}
+
+void Chess::move_rules_Q(int8_t i, int8_t j, PosList &moves) const {
+    move_rules_R(i, j, moves);
+    move_rules_B(i, j, moves);
+}
+
+void Chess::move_rules_n(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    std::vector<pos_t> steps = {{i + 2, j - 1}, {i + 2, j + 1}, {i + 1, j - 2}, {i - 1, j - 2},
-                                {i - 2, j + 1}, {i - 2, j - 1}, {i - 1, j + 2}, {i + 1, j + 2}};
+    const pos_t steps[] = {{i + 2, j - 1}, {i + 2, j + 1}, {i + 1, j - 2}, {i - 1, j - 2},
+                           {i - 2, j + 1}, {i - 2, j - 1}, {i - 1, j + 2}, {i + 1, j + 2}};
     for (auto p : steps) {
-        int a = p.first, b = p.second;
+        auto [a, b] = p;
         if (0 <= a && a <= 7 && 0 <= b && b <= 7) {
             if (is_white(board_state[a][b]) || board_state[a][b] == EMPTY) {
-                next_positions.emplace_back(a, b);
+                moves.emplace_back(a, b);
             }
         }
     }
-    return next_positions;
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_N(int8_t i, int8_t j) const {
-    std::vector<pos_t> next_positions;
+void Chess::move_rules_N(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
-    std::vector<pos_t> steps = {{i + 2, j - 1}, {i + 2, j + 1}, {i + 1, j - 2}, {i - 1, j - 2},
-                                {i - 2, j + 1}, {i - 2, j - 1}, {i - 1, j + 2}, {i + 1, j + 2}};
+    const pos_t steps[] = {{i + 2, j - 1}, {i + 2, j + 1}, {i + 1, j - 2}, {i - 1, j - 2},
+                           {i - 2, j + 1}, {i - 2, j - 1}, {i - 1, j + 2}, {i + 1, j + 2}};
     for (auto p : steps) {
-        int a = p.first, b = p.second;
+        auto [a, b] = p;
         if (0 <= a && a <= 7 && 0 <= b && b <= 7) {
             if (is_black(board_state[a][b]) || board_state[a][b] == EMPTY) {
-                next_positions.emplace_back(a, b);
+                moves.emplace_back(a, b);
             }
         }
     }
-    return next_positions;
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_q(int8_t i, int8_t j) const {
-    auto moves = move_rules_r(i, j);
-    auto diag = move_rules_b(i, j);
-    moves.insert(moves.end(), diag.begin(), diag.end());
-    return moves;
-}
-
-std::vector<Chess::pos_t> Chess::move_rules_Q(int8_t i, int8_t j) const {
-    auto moves = move_rules_R(i, j);
-    auto diag = move_rules_B(i, j);
-    moves.insert(moves.end(), diag.begin(), diag.end());
-    return moves;
-}
-
-std::vector<Chess::pos_t> Chess::possible_W_moves(bool threats) const {
-    std::vector<pos_t> c_list;
-    for (int i = 0; i < 8; ++i) {
-        for (int j = 0; j < 8; ++j) {
-            auto p = current_board[i][j];
-            std::vector<pos_t> moves;
-            switch (p) {
-            case W_ROOK:
-                moves = move_rules_R(i, j);
-                break;
-            case W_KNIGHT:
-                moves = move_rules_N(i, j);
-                break;
-            case W_BISHOP:
-                moves = move_rules_B(i, j);
-                break;
-            case W_QUEEN:
-                moves = move_rules_Q(i, j);
-                break;
-            case W_PAWN: {
-                auto res = move_rules_P(i, j);
-                moves = threats ? res.second : res.first;
-                break;
-            }
-            default:
-                break;
-            }
-            c_list.insert(c_list.end(), moves.begin(), moves.end());
-        }
-    }
-    return c_list;
-}
-
-std::vector<Chess::pos_t> Chess::possible_B_moves(bool threats) const {
-    std::vector<pos_t> c_list;
-    for (int i = 0; i < 8; ++i) {
-        for (int j = 0; j < 8; ++j) {
-            auto p = current_board[i][j];
-            std::vector<pos_t> moves;
-            switch (p) {
-            case B_ROOK:
-                moves = move_rules_r(i, j);
-                break;
-            case B_KNIGHT:
-                moves = move_rules_n(i, j);
-                break;
-            case B_BISHOP:
-                moves = move_rules_b(i, j);
-                break;
-            case B_QUEEN:
-                moves = move_rules_q(i, j);
-                break;
-            case B_PAWN: {
-                auto res = move_rules_p(i, j);
-                moves = threats ? res.second : res.first;
-                break;
-            }
-            default:
-                break;
-            }
-            c_list.insert(c_list.end(), moves.begin(), moves.end());
-        }
-    }
-    return c_list;
-}
-
-std::vector<Chess::pos_t> Chess::move_rules_k() const {
-    int i = -1, j = -1;
+void Chess::move_rules_k(PosList &moves) const {
+    int i = -1;
+    int j = -1;
     for (int r = 0; r < 8; ++r) {
         for (int c = 0; c < 8; ++c) {
             if (current_board[r][c] == B_KING) {
@@ -633,16 +549,13 @@ std::vector<Chess::pos_t> Chess::move_rules_k() const {
             break;
     }
     if (i == -1)
-        return {};
-    std::vector<pos_t> next_positions;
-    auto c_list = possible_W_moves(true);
-    std::set<std::pair<int, int>> c_set(c_list.begin(), c_list.end());
-    std::vector<pos_t> steps = {{i + 1, j},     {i - 1, j},     {i, j + 1},     {i, j - 1},
-                                {i + 1, j + 1}, {i - 1, j - 1}, {i + 1, j - 1}, {i - 1, j + 1}};
+        return;
+    const pos_t steps[] = {{i + 1, j},     {i - 1, j},     {i, j + 1},     {i, j - 1},
+                           {i + 1, j + 1}, {i - 1, j - 1}, {i + 1, j - 1}, {i - 1, j + 1}};
     for (auto p : steps) {
-        int a = p.first, b = p.second;
+        auto [a, b] = p;
         if (0 <= a && a <= 7 && 0 <= b && b <= 7) {
-            int sq = current_board[a][b];
+            auto sq = current_board[a][b];
             bool ok = false;
             switch (sq) {
             case EMPTY:
@@ -653,21 +566,23 @@ std::vector<Chess::pos_t> Chess::move_rules_k() const {
             case W_ROOK:
                 ok = true;
                 break;
+            default:
+                break;
             }
-            if (ok && c_set.find({a, b}) == c_set.end()) {
-                next_positions.emplace_back(a, b);
+            if (ok) {
+                moves.emplace_back(a, b);
             }
         }
     }
-    if (const_cast<Chess *>(this)->castle(0, false) == true && check_status() == false)
-        next_positions.emplace_back(0, 2);
-    if (const_cast<Chess *>(this)->castle(1, false) == true && check_status() == false)
-        next_positions.emplace_back(0, 6);
-    return next_positions;
+    if (can_castle(0) && !check_status())
+        moves.emplace_back(0, 2);
+    if (can_castle(1) && !check_status())
+        moves.emplace_back(0, 6);
 }
 
-std::vector<Chess::pos_t> Chess::move_rules_K() const {
-    int i = -1, j = -1;
+void Chess::move_rules_K(PosList &moves) const {
+    int i = -1;
+    int j = -1;
     for (int r = 0; r < 8; ++r) {
         for (int c = 0; c < 8; ++c) {
             if (current_board[r][c] == W_KING) {
@@ -680,16 +595,13 @@ std::vector<Chess::pos_t> Chess::move_rules_K() const {
             break;
     }
     if (i == -1)
-        return {};
-    std::vector<pos_t> next_positions;
-    auto c_list = possible_B_moves(true);
-    std::set<std::pair<int, int>> c_set(c_list.begin(), c_list.end());
-    std::vector<pos_t> steps = {{i + 1, j},     {i - 1, j},     {i, j + 1},     {i, j - 1},
-                                {i + 1, j + 1}, {i - 1, j - 1}, {i + 1, j - 1}, {i - 1, j + 1}};
+        return;
+    const pos_t steps[] = {{i + 1, j},     {i - 1, j},     {i, j + 1},     {i, j - 1},
+                           {i + 1, j + 1}, {i - 1, j - 1}, {i + 1, j - 1}, {i - 1, j + 1}};
     for (auto p : steps) {
-        int a = p.first, b = p.second;
+        auto [a, b] = p;
         if (0 <= a && a <= 7 && 0 <= b && b <= 7) {
-            int sq = current_board[a][b];
+            auto sq = current_board[a][b];
             bool ok = false;
             switch (sq) {
             case EMPTY:
@@ -700,23 +612,24 @@ std::vector<Chess::pos_t> Chess::move_rules_K() const {
             case B_ROOK:
                 ok = true;
                 break;
+            default:
+                break;
             }
-            if (ok && c_set.find({a, b}) == c_set.end()) {
-                next_positions.emplace_back(a, b);
+            if (ok) {
+                moves.emplace_back(a, b);
             }
         }
     }
-    if (const_cast<Chess *>(this)->castle(0, false) == true && check_status() == false)
-        next_positions.emplace_back(7, 2);
-    if (const_cast<Chess *>(this)->castle(1, false) == true && check_status() == false)
-        next_positions.emplace_back(7, 6);
-    return next_positions;
+    if (can_castle(0) && !check_status())
+        moves.emplace_back(7, 2);
+    if (can_castle(1) && !check_status())
+        moves.emplace_back(7, 6);
 }
 
 void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
     if (player == 0) {
-        bool promoted = false;
-        int piece = current_board[r1][c1];
+        auto promoted = false;
+        auto piece = current_board[r1][c1];
         current_board[r1][c1] = EMPTY;
         if (piece == W_ROOK && r1 == 7 && c1 == 0)
             R1_move_count++;
@@ -740,6 +653,8 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
                 case W_QUEEN:
                     is_valid_promo = true;
                     break;
+                default:
+                    break;
                 }
                 if (is_valid_promo) {
                     current_board[r2][c2] = promoted_piece;
@@ -753,7 +668,7 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
         move_count++;
     } else {
         bool promoted = false;
-        int piece = current_board[r1][c1];
+        auto piece = current_board[r1][c1];
         current_board[r1][c1] = EMPTY;
         if (piece == B_ROOK && r1 == 0 && c1 == 0)
             r1_move_count++;
@@ -777,6 +692,8 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
                 case B_QUEEN:
                     is_valid_promo = true;
                     break;
+                default:
+                    break;
                 }
                 if (is_valid_promo) {
                     current_board[r2][c2] = promoted_piece;
@@ -791,54 +708,24 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
     }
 }
 
-bool Chess::castle(int side, bool inplace) {
+bool Chess::can_castle(int side) const {
     if (player == 0 && K_move_count == 0) {
         if (side == 0 && R1_move_count == 0 && current_board[7][1] == EMPTY &&
             current_board[7][2] == EMPTY && current_board[7][3] == EMPTY) {
-            if (inplace) {
-                current_board[7][0] = EMPTY;
-                current_board[7][3] = W_ROOK;
-                current_board[7][4] = EMPTY;
-                current_board[7][2] = W_KING;
-                K_move_count++;
-                player = 1;
-            }
             return true;
-        } else if (side == 1 && R2_move_count == 0 && current_board[7][5] == EMPTY &&
-                   current_board[7][6] == EMPTY) {
-            if (inplace) {
-                current_board[7][7] = EMPTY;
-                current_board[7][5] = W_ROOK;
-                current_board[7][4] = EMPTY;
-                current_board[7][6] = W_KING;
-                K_move_count++;
-                player = 1;
-            }
+        }
+        if (side == 1 && R2_move_count == 0 && current_board[7][5] == EMPTY &&
+            current_board[7][6] == EMPTY) {
             return true;
         }
     }
     if (player == 1 && k_move_count == 0) {
         if (side == 0 && r1_move_count == 0 && current_board[0][1] == EMPTY &&
             current_board[0][2] == EMPTY && current_board[0][3] == EMPTY) {
-            if (inplace) {
-                current_board[0][0] = EMPTY;
-                current_board[0][3] = B_ROOK;
-                current_board[0][4] = EMPTY;
-                current_board[0][2] = B_KING;
-                k_move_count++;
-                player = 0;
-            }
             return true;
-        } else if (side == 1 && r2_move_count == 0 && current_board[0][5] == EMPTY &&
-                   current_board[0][6] == EMPTY) {
-            if (inplace) {
-                current_board[0][7] = EMPTY;
-                current_board[0][5] = B_ROOK;
-                current_board[0][4] = EMPTY;
-                current_board[0][6] = B_KING;
-                k_move_count++;
-                player = 0;
-            }
+        }
+        if (side == 1 && r2_move_count == 0 && current_board[0][5] == EMPTY &&
+            current_board[0][6] == EMPTY) {
             return true;
         }
     }
@@ -849,74 +736,85 @@ bool Chess::check_status() const {
     return bitboard::is_attacked(player, current_board);
 }
 
-void Chess::backup() {
-    copy_board = current_board;
-    move_count_copy = move_count;
-    en_passant_copy = en_passant;
-    en_passant_move_copy = en_passant_move;
-    r1_move_count_copy = r1_move_count;
-    r2_move_count_copy = r2_move_count;
-    k_move_count_copy = k_move_count;
-    R1_move_count_copy = R1_move_count;
-    R2_move_count_copy = R2_move_count;
-    K_move_count_copy = K_move_count;
-}
-
-void Chess::restore() {
-    current_board = copy_board;
-    move_count = move_count_copy;
-    en_passant = en_passant_copy;
-    en_passant_move = en_passant_move_copy;
-    r1_move_count = r1_move_count_copy;
-    r2_move_count = r2_move_count_copy;
-    k_move_count = k_move_count_copy;
-    R1_move_count = R1_move_count_copy;
-    R2_move_count = R2_move_count_copy;
-    K_move_count = K_move_count_copy;
-}
-
-std::vector<ChessAction<>> Chess::actions(bool stop_early) const {
-    std::vector<ChessAction<>> acts;
+ActionList<> Chess::actions(bool stop_early) const {
+    ActionList<> actss;
     auto b = *this;
+    PosList moves;
+
     if (b.player == 0) {
         for (int i = 0; i < 8; ++i) {
             for (int j = 0; j < 8; ++j) {
                 auto p = b.current_board[i][j];
                 if (is_white(p)) {
-                    std::vector<pos_t> moves;
+                    moves.clear();
                     switch (p) {
                     case W_ROOK:
-                        moves = b.move_rules_R(i, j);
+                        b.move_rules_R(i, j, moves);
                         break;
                     case W_KNIGHT:
-                        moves = b.move_rules_N(i, j);
+                        b.move_rules_N(i, j, moves);
                         break;
                     case W_BISHOP:
-                        moves = b.move_rules_B(i, j);
+                        b.move_rules_B(i, j, moves);
                         break;
                     case W_QUEEN:
-                        moves = b.move_rules_Q(i, j);
+                        b.move_rules_Q(i, j, moves);
                         break;
                     case W_KING:
-                        moves = b.move_rules_K();
+                        b.move_rules_K(moves);
                         break;
                     case W_PAWN:
-                        moves = b.move_rules_P(i, j).first;
+                        b.move_rules_P(i, j, moves);
                         break;
                     default:
                         std::abort();
                     }
 
-                    for (auto &f : moves) {
+                    for (int mi = 0; mi < moves.size(); ++mi) {
+                        auto f = moves.list[mi];
                         auto r1 = static_cast<int8_t>(i);
                         auto c1 = static_cast<int8_t>(j);
-                        if (p == W_PAWN && f.first == 0) {
-                            acts.emplace_back(r1, c1, f.first, f.second, 1); // Q
-                            acts.emplace_back(r1, c1, f.first, f.second, 2); // R
-                            acts.emplace_back(r1, c1, f.first, f.second, 3); // N
-                            acts.emplace_back(r1, c1, f.first, f.second, 4); // B
-                        } else {
-                            acts.emplace_back(r1, c1, f.first, f.second, 0);
+                        if (p == W_KING) {
+                            r1 = b.K_move_count > 0 ? i : 7;
+                            c1 = b.K_move_count > 0 ? j : 4;
+                            for (int rr = 0; rr < 8; ++rr)
+                                for (int cc = 0; cc < 8; ++cc)
+                                    if (b.current_board[rr][cc] == W_KING) {
+                                        r1 = rr;
+                                        c1 = cc;
+                                    }
+                        }
+                        auto copy = current_board;
+                        copy[f.first][f.second] = p;
+                        copy[r1][c1] = 0;
+
+                        // Handle Castling
+                        if (p == W_KING && std::abs(f.second - c1) == 2) {
+                            if (f.second == 6) { // Kingside
+                                copy[7][5] = copy[7][7];
+                                copy[7][7] = 0;
+                            } else if (f.second == 2) { // Queenside
+                                copy[7][3] = copy[7][0];
+                                copy[7][0] = 0;
+                            }
+                        }
+                        // Handle En Passant
+                        if (p == W_PAWN && c1 != f.second &&
+                            current_board[f.first][f.second] == 0) {
+                            copy[r1][f.second] = 0;
+                        }
+
+                        if (!bitboard::is_attacked(player, copy)) {
+                            if (p == W_PAWN && f.first == 0) {
+                                actss.emplace_back(r1, c1, f.first, f.second, 1);
+                                actss.emplace_back(r1, c1, f.first, f.second, 2);
+                                actss.emplace_back(r1, c1, f.first, f.second, 3);
+                                actss.emplace_back(r1, c1, f.first, f.second, 4);
+                            } else {
+                                actss.emplace_back(r1, c1, f.first, f.second, 0);
+                            }
+                            if (stop_early && !actss.empty())
+                                return actss;
                         }
                     }
                 }
@@ -927,40 +825,75 @@ std::vector<ChessAction<>> Chess::actions(bool stop_early) const {
             for (int j = 0; j < 8; ++j) {
                 auto p = b.current_board[i][j];
                 if (is_black(p)) {
-                    std::vector<pos_t> moves;
+                    moves.clear();
                     switch (p) {
                     case B_ROOK:
-                        moves = b.move_rules_r(i, j);
+                        b.move_rules_r(i, j, moves);
                         break;
                     case B_KNIGHT:
-                        moves = b.move_rules_n(i, j);
+                        b.move_rules_n(i, j, moves);
                         break;
                     case B_BISHOP:
-                        moves = b.move_rules_b(i, j);
+                        b.move_rules_b(i, j, moves);
                         break;
                     case B_QUEEN:
-                        moves = b.move_rules_q(i, j);
+                        b.move_rules_q(i, j, moves);
                         break;
                     case B_KING:
-                        moves = b.move_rules_k();
+                        b.move_rules_k(moves);
                         break;
                     case B_PAWN:
-                        moves = b.move_rules_p(i, j).first;
+                        b.move_rules_p(i, j, moves);
                         break;
                     default:
                         std::abort();
                     }
 
-                    for (auto &f : moves) {
+                    for (int mi = 0; mi < moves.size(); ++mi) {
+                        auto f = moves.list[mi];
                         auto r1 = static_cast<int8_t>(i);
                         auto c1 = static_cast<int8_t>(j);
-                        if (p == B_PAWN && f.first == 7) {
-                            acts.emplace_back(r1, c1, f.first, f.second, 1); // q
-                            acts.emplace_back(r1, c1, f.first, f.second, 2); // r
-                            acts.emplace_back(r1, c1, f.first, f.second, 3); // n
-                            acts.emplace_back(r1, c1, f.first, f.second, 4); // b
-                        } else {
-                            acts.emplace_back(r1, c1, f.first, f.second, 0);
+                        if (p == B_KING) {
+                            r1 = b.k_move_count > 0 ? i : 0;
+                            c1 = b.k_move_count > 0 ? j : 4;
+                            for (int rr = 0; rr < 8; ++rr)
+                                for (int cc = 0; cc < 8; ++cc)
+                                    if (b.current_board[rr][cc] == B_KING) {
+                                        r1 = rr;
+                                        c1 = cc;
+                                    }
+                        }
+                        auto copy = current_board;
+                        copy[f.first][f.second] = p;
+                        copy[r1][c1] = 0;
+
+                        // Handle Castling
+                        if (p == B_KING && std::abs(f.second - c1) == 2) {
+                            if (f.second == 6) { // Kingside
+                                copy[0][5] = copy[0][7];
+                                copy[0][7] = 0;
+                            } else if (f.second == 2) { // Queenside
+                                copy[0][3] = copy[0][0];
+                                copy[0][0] = 0;
+                            }
+                        }
+                        // Handle En Passant
+                        if (p == B_PAWN && c1 != f.second &&
+                            current_board[f.first][f.second] == 0) {
+                            copy[r1][f.second] = 0;
+                        }
+
+                        if (!bitboard::is_attacked(player, copy)) {
+                            if (p == B_PAWN && f.first == 7) {
+                                actss.emplace_back(r1, c1, f.first, f.second, 1);
+                                actss.emplace_back(r1, c1, f.first, f.second, 2);
+                                actss.emplace_back(r1, c1, f.first, f.second, 3);
+                                actss.emplace_back(r1, c1, f.first, f.second, 4);
+                            } else {
+                                actss.emplace_back(r1, c1, f.first, f.second, 0);
+                            }
+                            if (stop_early && !actss.empty())
+                                return actss;
                         }
                     }
                 }
@@ -968,34 +901,5 @@ std::vector<ChessAction<>> Chess::actions(bool stop_early) const {
         }
     }
 
-    std::vector<ChessAction<>> actss;
-    for (auto &act : acts) {
-        std::array<std::array<int8_t, 8>, 8> copy = current_board;
-        int8_t p = copy[act.r1][act.c1];
-        copy[act.r2][act.c2] = p;
-        copy[act.r1][act.c1] = 0;
-
-        // Handle Castling
-        if ((p == W_KING || p == B_KING) && std::abs(act.c2 - act.c1) == 2) {
-            if (act.c2 == 6) { // Kingside
-                copy[act.r2][5] = copy[act.r2][7];
-                copy[act.r2][7] = 0;
-            } else if (act.c2 == 2) { // Queenside
-                copy[act.r2][3] = copy[act.r2][0];
-                copy[act.r2][0] = 0;
-            }
-        }
-        // Handle En Passant
-        if ((p == W_PAWN || p == B_PAWN) && act.c1 != act.c2 &&
-            current_board[act.r2][act.c2] == 0) {
-            copy[act.r1][act.c2] = 0;
-        }
-
-        if (!bitboard::is_attacked(player, copy)) {
-            actss.push_back(act);
-            if (stop_early)
-                return actss;
-        }
-    }
     return actss;
 }

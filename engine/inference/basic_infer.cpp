@@ -11,6 +11,9 @@
 #include <mutex>
 #include <spdlog/spdlog.h>
 #include <thread>
+#ifdef ALPHAZERO_TRT_LIB_PATH
+#include <dlfcn.h>
+#endif
 
 #include <torch/torch.h> // For torch::Tensor and device
 #include <utility>
@@ -170,7 +173,7 @@ class DynamicBatcher {
     DynamicBatcher(int wait_for_count, int timeout_ms, std::shared_ptr<Network> network,
                    torch::Device device)
         : wait_for_count(wait_for_count), timeout_ms(timeout_ms), network(network),
-          infer_method(network->get_method("infer")), device(device) {
+          infer_method(network->get_method("forward")), device(device) {
         worker = std::thread(&DynamicBatcher::worker_loop, this);
     }
 
@@ -219,6 +222,20 @@ static std::shared_ptr<Network> get_network_func(std::string network_file_path,
                                                  torch::Device device) {
     if (std::filesystem::exists(network_file_path)) {
         try {
+#ifdef ALPHAZERO_TRT_LIB_PATH
+            static const bool trt_runtime_loaded = []() {
+                void *handle = dlopen(ALPHAZERO_TRT_LIB_PATH, RTLD_NOW | RTLD_GLOBAL);
+                if (handle == nullptr) {
+                    const char *dlopen_error = dlerror();
+                    spdlog::warn("Failed to pre-load libtorchtrt from '{}': {}",
+                                 ALPHAZERO_TRT_LIB_PATH,
+                                 dlopen_error != nullptr ? dlopen_error : "unknown error");
+                    return false;
+                }
+                return true;
+            }();
+            (void)trt_runtime_loaded;
+#endif
             return std::make_shared<Network>(torch::jit::load(network_file_path, device));
         } catch (const c10::Error &e) {
             spdlog::error(

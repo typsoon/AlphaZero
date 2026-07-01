@@ -1,0 +1,21 @@
+{
+  "$id": "alphazero:game-state:chess-policy",
+  "type": "object",
+  "required": [
+    "policy"
+  ],
+  "properties": {
+    "policy": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "value"],
+        "properties": {
+          "index": { "type": "integer" },
+          "value": { "type": "number" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

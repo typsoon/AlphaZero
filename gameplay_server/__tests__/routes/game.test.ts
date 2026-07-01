@@ -57,7 +57,7 @@ describe('Game Routes Integration', () => {
     expect(response.statusCode).toBe(400);
     const body = JSON.parse(response.payload);
     expect(body.status).toBe('error');
-    expect(body.message).toBe('Invalid column');
+    expect(body.message).toBe('Invalid action');
   });
 
   test('POST /game/:id/move with missing player_id returns 401', async () => {
@@ -93,7 +93,7 @@ describe('Game Routes Integration', () => {
     if (response.statusCode === 200) {
       const body = JSON.parse(response.payload);
       expect(body.status).toBe('ok');
-      expect(body.player_column).toBe(3);
+      expect(body.player_action).toBe(3);
       expect(body.board).toBeInstanceOf(Array);
     } else {
       expect(response.statusCode).toBe(500);
@@ -101,5 +101,126 @@ describe('Game Routes Integration', () => {
       expect(body.status).toBe('error');
       expect(body.message).toMatch(/ENOENT|Move failed/);
     }
+  });
+  describe('Chess Game Tests', () => {
+    let chessGameId = '';
+    let chessPlayerId = '';
+
+    test('POST /game/create creates a chess game', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/game/create',
+        payload: {
+          game_type: 'chess',
+          p1_type: 'human',
+          p2_type: 'human',
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.status).toBe('ok');
+      chessGameId = body.game_id;
+      chessPlayerId = body.p1_id;
+    });
+
+    test('GET /game/:id/status returns valid chess state schema', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/game/${chessGameId}/status`,
+      });
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.status).toBe('ok');
+      expect(body.gameType).toBe('chess');
+      expect(body.board).toBeInstanceOf(Array);
+      expect(body.board).toHaveLength(8); // Chess is 8x8
+      expect(body.fen).toBeDefined();
+    });
+
+    test('POST /game/:id/move accepts a valid chess action', async () => {
+      // Get legal actions first to ensure we pick a valid one dynamically
+      const statusRes = await app.inject({
+        method: 'GET',
+        url: `/game/${chessGameId}/status`,
+      });
+      const statusBody = JSON.parse(statusRes.payload);
+      const validAction = statusBody.legal_actions[0];
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/game/${chessGameId}/move`,
+        payload: { action: validAction, player_id: chessPlayerId },
+      });
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.status).toBe('ok');
+      expect(body.player_action).toBe(validAction);
+      expect(body.board).toBeInstanceOf(Array);
+    });
+
+    test('POST /game/:id/move rejects an invalid chess action out of bounds', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/game/${chessGameId}/move`,
+        payload: { action: 999999, player_id: chessPlayerId },
+      });
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.payload);
+      expect(body.status).toBe('error');
+      expect(body.message).toBe('Invalid action');
+    });
+    test("plays a fool's mate and terminates the game", async () => {
+      // Create a new game
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/game/create',
+        payload: {
+          game_type: 'chess',
+          p1_type: 'human',
+          p2_type: 'human',
+        },
+      });
+      const createBody = JSON.parse(createRes.payload);
+      const gameId = createBody.game_id;
+      const playerId = createBody.p1_id;
+
+      // 1. f3 e5 2. g4 Qh4#
+      const getChessAction = (
+        fromRow: number,
+        fromCol: number,
+        toRow: number,
+        toCol: number,
+        promotion = 0,
+      ) => {
+        const fromIndex = fromRow * 8 + fromCol;
+        const toIndex = toRow * 8 + toCol;
+        return (fromIndex * 64 + toIndex) * 5 + promotion;
+      };
+
+      const moves = [
+        getChessAction(6, 5, 5, 5), // f3 (white)
+        getChessAction(1, 4, 3, 4), // e5 (black)
+        getChessAction(6, 6, 4, 6), // g4 (white)
+        getChessAction(0, 3, 4, 7), // Qh4# (black)
+      ];
+
+      for (const action of moves) {
+        const moveRes = await app.inject({
+          method: 'POST',
+          url: `/game/${gameId}/move`,
+          payload: { action, player_id: playerId },
+        });
+        expect(moveRes.statusCode).toBe(200);
+      }
+
+      const statusRes = await app.inject({
+        method: 'GET',
+        url: `/game/${gameId}/status`,
+      });
+      expect(statusRes.statusCode).toBe(200);
+      const body = JSON.parse(statusRes.payload);
+      expect(body.is_terminal).toBe(true);
+      expect(body.surrender_winner).toBe(-1);
+    });
   });
 });

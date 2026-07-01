@@ -7,7 +7,7 @@
   "type": "module",
   "main": "server.ts",
   "scripts": {
-    "test": "npm run clean:tests && npm run build && npm run build:tests && node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand dist-tests/__tests__/",
+    "test": "npm run clean:tests && npm run build && npm run build:tests && DB_PATH=\":memory:\" node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand dist-tests/__tests__/",
     "build": "tsc -p tsconfig.json",
     "build:tests": "tsc -p tsconfig.tests.json",
     "clean:tests": "find __tests__ -type f \\( -name '*.js' -o -name '*.js.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \\) -delete && rm -rf dist-tests",
@@ -20,6 +20,7 @@
   "dependencies": {
     "@fastify/websocket": "^11.0.1",
     "better-sqlite3": "^12.11.1",
+    "chess.js": "^1.4.0",
     "fastify": "^5.8.4",
     "uuid": "^14.0.1"
   },

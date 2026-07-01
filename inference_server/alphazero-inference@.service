@@ -1,5 +1,5 @@
 [Unit]
-Description=AlphaZero Inference Server
+Description=AlphaZero Inference Server for %i
 After=network.target
 
 [Service]
@@ -8,9 +8,9 @@ Type=simple
 Environment="MCTS_SEARCH_DEPTH=800"
 Environment="MCTS_BATCH_SIZE=1"
 # Load environment variables from this file
-EnvironmentFile=%h/.config/alphazero/inference.env
+EnvironmentFile=%h/.config/alphazero/inference-%i.env
 # Execute the server with the variables
-ExecStart=%h/.local/bin/alphazero-inference-server --network-path ${NETWORK_PATH} --device ${DEVICE} --mcts-search-depth ${MCTS_SEARCH_DEPTH} --mcts-batch-size ${MCTS_BATCH_SIZE}
+ExecStart=%h/.local/bin/alphazero-inference-server --network-path ${NETWORK_PATH} --device ${DEVICE} --game %i --mcts-search-depth ${MCTS_SEARCH_DEPTH} --mcts-batch-size ${MCTS_BATCH_SIZE}
 Restart=on-failure
 RestartSec=5s
 

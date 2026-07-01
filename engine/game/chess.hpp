@@ -32,22 +32,39 @@ template <typename T = int8_t> struct ChessAction {
         : r1(r1), c1(c1), r2(r2), c2(c2), promotion(promotion) {}
 };
 
+template <typename T = int8_t> struct ActionList {
+    std::array<ChessAction<T>, 256> list{};
+    int _size = 0;
+
+    void push_back(const ChessAction<T> &a) { list[_size++] = a; }
+    void emplace_back(T r1, T c1, T r2, T c2, T promo) { list[_size++] = {r1, c1, r2, c2, promo}; }
+    const ChessAction<T> *begin() const { return list.data(); }
+    const ChessAction<T> *end() const { return list.data() + _size; }
+    ChessAction<T> *begin() { return list.data(); }
+    ChessAction<T> *end() { return list.data() + _size; }
+    bool empty() const { return _size == 0; }
+    int size() const { return _size; }
+};
+
+struct PosList {
+    std::array<std::pair<int8_t, int8_t>, 32> list;
+    int _size = 0;
+    void emplace_back(int8_t r, int8_t c) { list[_size++] = {r, c}; }
+    const std::pair<int8_t, int8_t> *begin() const { return list.data(); }
+    const std::pair<int8_t, int8_t> *end() const { return list.data() + _size; }
+    int size() const { return _size; }
+    void clear() { _size = 0; }
+};
+
 class Chess : public Game2D<8, 8> {
   private:
-    board_t current_board;
-    int8_t player; // 0 for white, 1 for black
-    int16_t move_count;
-    int8_t en_passant;
-    int16_t en_passant_move;
-    int16_t r1_move_count, r2_move_count, k_move_count;
-    int16_t R1_move_count, R2_move_count, K_move_count;
-
-    board_t copy_board;
-    int8_t en_passant_copy;
-    int16_t r1_move_count_copy, r2_move_count_copy, k_move_count_copy;
-    int16_t R1_move_count_copy, R2_move_count_copy, K_move_count_copy;
-    int16_t move_count_copy;
-    int16_t en_passant_move_copy;
+    board_t current_board{};
+    int8_t player{}; // 0 for white, 1 for black
+    int16_t move_count{};
+    int8_t en_passant{};
+    int16_t en_passant_move{};
+    int16_t r1_move_count{}, r2_move_count{}, k_move_count{};
+    int16_t R1_move_count{}, R2_move_count{}, K_move_count{};
 
   public:
     static constexpr int action_dim = 64 * 64 * 5;
@@ -81,33 +98,28 @@ class Chess : public Game2D<8, 8> {
     static bool is_black(int8_t p);
     static bool is_empty(int8_t p);
 
-    std::pair<std::vector<pos_t>, std::vector<pos_t>> move_rules_P(int8_t i, int8_t j) const;
-    std::pair<std::vector<pos_t>, std::vector<pos_t>> move_rules_p(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_r(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_R(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_n(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_N(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_b(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_B(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_q(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_Q(int8_t i, int8_t j) const;
-    std::vector<pos_t> move_rules_k() const;
-    std::vector<pos_t> move_rules_K() const;
-
-    std::vector<pos_t> possible_W_moves(bool threats = false) const;
-    std::vector<pos_t> possible_B_moves(bool threats = false) const;
+    void move_rules_P(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_p(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_r(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_R(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_n(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_N(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_b(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_B(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_q(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_Q(int8_t i, int8_t j, PosList &moves) const;
+    void move_rules_k(PosList &moves) const;
+    void move_rules_K(PosList &moves) const;
 
   public:
     void move_piece(int r1, int c1, int r2, int c2, int promoted_piece = W_QUEEN);
+    bool can_castle(int side) const;
     bool castle(int side, bool inplace = false); // side: 0=queenside, 1=kingside
     bool check_status() const;
-    std::vector<ChessAction<>> actions(bool stop_early = false) const;
+    ActionList<> actions(bool stop_early = false) const;
 
-    int encode_action(const ChessAction<> &a) const;
-    ChessAction<> decode_action(int a) const;
-
-    void backup();
-    void restore();
+    static int encode_action(const ChessAction<> &a);
+    static ChessAction<> decode_action(int a);
 };
 
 #endif

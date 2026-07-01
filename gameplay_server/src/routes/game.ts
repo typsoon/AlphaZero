@@ -1,5 +1,7 @@
-import type { FastifyInstance } from 'fastify';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import Connect4 from '../game/connect4.js';
+import { ChessBoard } from '../game/chess.js';
 import { AlphaZeroAgent } from '../agent.js';
 import {
   createGame,
@@ -18,6 +20,15 @@ function toCppInferenceGameState(board: number[][]) {
     row.map((cell) => (cell === -1 ? 2 : cell)),
   );
   return { board: convertedBoard };
+}
+
+function getGameInstance(dbGame: any) {
+  if (dbGame.gameType === 'chess') {
+    const state = dbGame.board;
+    return new ChessBoard(state.fen);
+  } else {
+    return new Connect4(dbGame.board);
+  }
 }
 
 const subscriptions = new Map<string, Set<WebSocket>>();
@@ -43,40 +54,56 @@ export default async function gameRoutes(server: FastifyInstance) {
     }
   });
 
-  server.get('/agents', async () => {
-    try {
-      const baseDir = '/tmp';
-      const files = await fs.readdir(baseDir);
-      const dirs = files.filter((f) => f.startsWith('alphazero-inference-'));
+  server.get(
+    '/agents',
+    async (request: FastifyRequest<{ Querystring: { game?: string } }>) => {
+      try {
+        const queryGame = request.query.game;
+        const baseDir = '/tmp';
+        const files = await fs.readdir(baseDir);
+        const dirs = files.filter((f) => f.startsWith('alphazero-inference-'));
 
-      const agents = new Set<string>();
-      for (const dir of dirs) {
-        const fullDir = path.join(baseDir, dir);
-        try {
-          const subFiles = await fs.readdir(fullDir, { withFileTypes: true });
-          for (const f of subFiles) {
-            if (f.isDirectory()) {
-              agents.add(f.name);
-            } else if (f.name.endsWith('.sock')) {
-              // Legacy/fallback: if socket is directly in the inference folder without a network subfolder
-              agents.add(f.name);
+        const agents = new Set<string>();
+        for (const dir of dirs) {
+          const fullDir = path.join(baseDir, dir);
+          try {
+            if (queryGame) {
+              const gameDir = path.join(fullDir, queryGame);
+              const subFiles = await fs.readdir(gameDir, {
+                withFileTypes: true,
+              });
+              for (const f of subFiles) {
+                if (f.isDirectory()) agents.add(f.name);
+              }
+            } else {
+              const games = await fs.readdir(fullDir, { withFileTypes: true });
+              for (const g of games) {
+                if (g.isDirectory()) {
+                  const subFiles = await fs.readdir(
+                    path.join(fullDir, g.name),
+                    { withFileTypes: true },
+                  );
+                  for (const f of subFiles) {
+                    if (f.isDirectory()) agents.add(f.name);
+                  }
+                }
+              }
             }
+          } catch {
+            /* ignore */
           }
-        } catch {
-          /* ignore */
         }
+        return { status: 'ok', agents: Array.from(agents) };
+      } catch (e: unknown) {
+        server.log.error(e);
+        return { status: 'error', agents: [] };
       }
-      return { status: 'ok', agents: Array.from(agents) };
-    } catch (e: unknown) {
-      server.log.error(e);
-      return { status: 'error', agents: [] };
-    }
-  });
+    },
+  );
 
   server.get(
     '/game/:id/ws',
     { websocket: true },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (connection: any /* WebSocket */, req /* FastifyRequest */) => {
       const { id } = req.params as { id: string };
       if (!subscriptions.has(id)) {
@@ -105,14 +132,15 @@ export default async function gameRoutes(server: FastifyInstance) {
     if (!dbGame || dbGame.finished) return;
 
     const currentPlayer = dbGame.currentPlayer;
-    const isP1 = currentPlayer === 1;
+    const isP1 =
+      dbGame.gameType === 'chess' ? currentPlayer === 0 : currentPlayer === 1;
     const currentType = isP1 ? dbGame.p1Type : dbGame.p2Type;
     const currentAgent = isP1 ? dbGame.p1Agent : dbGame.p2Agent;
 
     if (currentType === 'ai' && currentAgent) {
       let resolvedAgent = currentAgent;
       if (!currentAgent.endsWith('.sock')) {
-        // Resolve network name (e.g. "default") to an active socket path
+        // Resolve network name (e.g. "AZNetwork_0") to a socket path.
         const baseDir = '/tmp';
         try {
           const files = await fs.readdir(baseDir);
@@ -120,20 +148,37 @@ export default async function gameRoutes(server: FastifyInstance) {
             f.startsWith('alphazero-inference-'),
           );
           for (const dir of dirs) {
-            const networkDir = path.join(baseDir, dir, currentAgent);
+            const networkDir = path.join(
+              baseDir,
+              dir,
+              dbGame.gameType,
+              currentAgent,
+            );
             try {
               const sockets = await fs.readdir(networkDir);
               const validSockets = sockets.filter((s) => s.endsWith('.sock'));
               if (validSockets.length > 0) {
-                // Pick one randomly
-                const chosen = validSockets[
-                  Math.floor(Math.random() * validSockets.length)
-                ] as string;
-                resolvedAgent = path.join(networkDir, chosen);
+                // Pick most recently modified socket (most likely to be alive)
+                const socketsWithStats = await Promise.all(
+                  validSockets.map(async (s) => {
+                    const fullPath = path.join(networkDir, s);
+                    try {
+                      const stat = await fs.stat(fullPath);
+                      return { path: fullPath, mtime: stat.mtime.getTime() };
+                    } catch {
+                      return { path: fullPath, mtime: 0 };
+                    }
+                  }),
+                );
+                socketsWithStats.sort((a, b) => b.mtime - a.mtime);
+                resolvedAgent = socketsWithStats[0]!.path;
+                server.log.info(
+                  `Resolved AI agent '${currentAgent}' to socket: ${resolvedAgent}`,
+                );
                 break;
               }
             } catch {
-              /* ignore */
+              /* ignore missing dir */
             }
           }
         } catch {
@@ -148,34 +193,75 @@ export default async function gameRoutes(server: FastifyInstance) {
         return;
       }
 
-      const game = new Connect4(dbGame.board);
+      const game = getGameInstance(dbGame);
+
       const agent = new AlphaZeroAgent(resolvedAgent);
       try {
-        const aiGameState = toCppInferenceGameState(
-          game.get_board_state().board,
-        );
+        const aiGameState =
+          dbGame.gameType === 'chess'
+            ? (game as any).get_inference_state()
+            : toCppInferenceGameState((game.get_board_state() as any).board);
         const aiMove = await agent.act(aiGameState);
         game.step(aiMove);
 
         const history = dbGame.history;
-        history.push(game.get_board_state().board);
+        const bs =
+          dbGame.gameType === 'chess'
+            ? game.get_board_state()
+            : (game.get_board_state() as any).board;
+        if (dbGame.gameType === 'chess') {
+          (bs as any).last_action = aiMove;
+        }
+        history.push(bs);
 
         const isTerm = game.is_terminal();
+        let winner: number | null = dbGame.winner ?? null;
+        let winReason: string | null = dbGame.winReason ?? null;
+
+        if (isTerm && dbGame.gameType === 'chess') {
+          const boardState = game.get_board_state() as any;
+          const ChessModule = await import('chess.js');
+          const chessObj = new ChessModule.Chess(boardState.fen);
+          if (chessObj.isCheckmate()) {
+            winner = chessObj.turn() === 'w' ? -1 : 1;
+            winReason = 'checkmate';
+          } else if (
+            chessObj.isDraw() ||
+            chessObj.isStalemate() ||
+            chessObj.isThreefoldRepetition() ||
+            chessObj.isInsufficientMaterial()
+          ) {
+            winner = 0; // Draw
+            winReason = 'draw';
+          }
+        }
+
         updateGame(
           id,
-          JSON.stringify(game.get_board_state().board),
+          JSON.stringify(
+            dbGame.gameType === 'chess'
+              ? game.get_board_state()
+              : (game.get_board_state() as any).board,
+          ),
           game.get_current_player(),
           isTerm,
           JSON.stringify(history),
+          winner,
+          winReason,
         );
         const newState = {
-          board: game.get_board_state().board,
+          board: (game.get_board_state() as any).board,
+          fen:
+            dbGame.gameType === 'chess'
+              ? (game.get_board_state() as any).fen
+              : undefined,
           legal_actions: game.get_legal_actions(),
           is_terminal: isTerm,
           current_player: game.get_current_player(),
           history: history,
           status: 'ok',
-          surrender_winner: null,
+          surrender_winner: winner,
+          win_reason: winReason,
         };
         broadcastState(id, newState);
 
@@ -188,13 +274,16 @@ export default async function gameRoutes(server: FastifyInstance) {
           }
         }
       } catch (e: unknown) {
-        const err = e as { code?: string; message?: string };
+        const err = e as { code?: string; message?: string; stack?: string };
         if (err.code === 'ENOENT') {
           server.log.warn(
             `Inference server socket not found at ${resolvedAgent}. Ensure the inference server is running.`,
           );
         } else {
-          server.log.error(`AI turn failed: ${err.message || String(e)}`);
+          server.log.error(
+            { resolvedAgent, code: err.code, stack: err.stack },
+            `AI turn failed: ${err.message || String(e)}`,
+          );
         }
       }
     }
@@ -211,14 +300,29 @@ export default async function gameRoutes(server: FastifyInstance) {
     const p1Agent = body?.p1_agent || null;
     const p2Type = body?.p2_type || 'human';
     const p2Agent = body?.p2_agent || null;
+    const gameType = (body as any)?.game_type || 'connect4';
 
-    const game = new Connect4();
+    let game;
+    if (gameType === 'chess') {
+      game = new ChessBoard();
+    } else {
+      game = new Connect4();
+    }
+
     const p1Id = p1Type === 'human' ? uuidv4() : null;
     const p2Id = p2Type === 'human' ? p1Id : null;
 
-    const history = [game.get_board_state().board];
+    const history = [
+      gameType === 'chess'
+        ? game.get_board_state()
+        : (game.get_board_state() as any).board,
+    ];
     const gameId = createGame(
-      JSON.stringify(game.get_board_state().board),
+      JSON.stringify(
+        gameType === 'chess'
+          ? game.get_board_state()
+          : (game.get_board_state() as any).board,
+      ),
       game.get_current_player(),
       game.is_terminal(),
       p1Type,
@@ -227,6 +331,7 @@ export default async function gameRoutes(server: FastifyInstance) {
       p2Type,
       p2Agent,
       p2Id,
+      gameType,
       JSON.stringify(history),
     );
 
@@ -246,20 +351,27 @@ export default async function gameRoutes(server: FastifyInstance) {
       return { status: 'error', message: 'Game not found' };
     }
 
-    const game = new Connect4(dbGame.board);
+    const game = getGameInstance(dbGame);
 
     return {
       status: 'ok',
-      board: game.get_board_state().board,
+      board: dbGame.gameType === 'chess' ? dbGame.board.board : dbGame.board,
+      fen: dbGame.gameType === 'chess' ? dbGame.board.fen : undefined,
+      gameType: dbGame.gameType,
       legal_actions: game.get_legal_actions(),
       is_terminal: game.is_terminal(),
       current_player: game.get_current_player(),
       history: dbGame.history,
       surrender_winner: dbGame.winner,
+      win_reason: dbGame.winReason,
       p1_type: dbGame.p1Type,
       p1_agent: dbGame.p1Agent,
       p2_type: dbGame.p2Type,
       p2_agent: dbGame.p2Agent,
+      player_action:
+        dbGame.gameType === 'chess' && dbGame.history.length > 0
+          ? (dbGame.history[dbGame.history.length - 1] as any).last_action
+          : undefined,
     };
   });
 
@@ -295,7 +407,7 @@ export default async function gameRoutes(server: FastifyInstance) {
       p2Id,
     );
 
-    const game = new Connect4(dbGame.board);
+    const game = getGameInstance(dbGame);
     const currentPlayerType =
       game.get_current_player() === 1 ? body.p1_type : body.p2_type;
     if (currentPlayerType === 'ai' && !game.is_terminal()) {
@@ -321,29 +433,51 @@ export default async function gameRoutes(server: FastifyInstance) {
       return { status: 'error', message: 'Game not found' };
     }
 
-    if (playerId !== dbGame.p1Id && playerId !== dbGame.p2Id) {
+    const isP1 = dbGame.p1Id && playerId.includes(dbGame.p1Id);
+    const isP2 = dbGame.p2Id && playerId.includes(dbGame.p2Id);
+    if (!isP1 && !isP2) {
       reply.code(403);
       return { status: 'error', message: 'Not a player in this game' };
     }
 
-    const game = new Connect4();
-    const history = [game.get_board_state().board];
+    let game;
+    if (dbGame.gameType === 'chess') {
+      game = new ChessBoard();
+    } else {
+      game = new Connect4();
+    }
+    const history = [
+      dbGame.gameType === 'chess'
+        ? game.get_board_state()
+        : (game.get_board_state() as any).board,
+    ];
     updateGame(
       id,
-      JSON.stringify(game.get_board_state().board),
+      JSON.stringify(
+        dbGame.gameType === 'chess'
+          ? game.get_board_state()
+          : (game.get_board_state() as any).board,
+      ),
       game.get_current_player(),
-      game.is_terminal(),
+      false,
       JSON.stringify(history),
     );
-
     const newState = {
-      board: game.get_board_state().board,
+      board:
+        dbGame.gameType === 'chess'
+          ? (game.get_board_state() as any).board
+          : (game.get_board_state() as any).board,
+      fen:
+        dbGame.gameType === 'chess'
+          ? (game.get_board_state() as any).fen
+          : undefined,
       legal_actions: game.get_legal_actions(),
-      is_terminal: game.is_terminal(),
+      is_terminal: false,
       current_player: game.get_current_player(),
-      history: history,
+      history,
       status: 'ok',
       surrender_winner: null,
+      win_reason: null,
     };
     broadcastState(id, newState);
 
@@ -356,8 +490,12 @@ export default async function gameRoutes(server: FastifyInstance) {
 
   server.post('/game/:id/move', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { column?: number; player_id?: string };
-    const column = body?.column;
+    const body = req.body as {
+      column?: number;
+      action?: number;
+      player_id?: string;
+    };
+    const action = body?.action ?? body?.column;
     const playerId = body?.player_id;
 
     if (!playerId) {
@@ -371,7 +509,7 @@ export default async function gameRoutes(server: FastifyInstance) {
       return { status: 'error', message: 'Game not found' };
     }
 
-    const game = new Connect4(dbGame.board);
+    const game = getGameInstance(dbGame);
 
     if (game.is_terminal()) {
       reply.code(400);
@@ -379,70 +517,115 @@ export default async function gameRoutes(server: FastifyInstance) {
     }
 
     const currentPlayer = game.get_current_player();
-    const expectedPlayerId = currentPlayer === 1 ? dbGame.p1Id : dbGame.p2Id;
+    const isP1 =
+      dbGame.gameType === 'chess' ? currentPlayer === 0 : currentPlayer === 1;
+    const expectedPlayerId = isP1 ? dbGame.p1Id : dbGame.p2Id;
 
-    if (!expectedPlayerId || playerId !== expectedPlayerId) {
+    if (!expectedPlayerId || !playerId.includes(expectedPlayerId)) {
       reply.code(403);
       return { status: 'error', message: 'Not your turn or invalid player ID' };
     }
 
     if (
-      column === undefined ||
-      typeof column !== 'number' ||
-      column < 0 ||
-      column > 6
+      action === undefined ||
+      typeof action !== 'number' ||
+      action < 0 ||
+      action >= game.getActionSize()
     ) {
       reply.code(400);
-      return { status: 'error', message: 'Invalid column' };
+      return { status: 'error', message: 'Invalid action' };
     }
 
     const legalActions = game.get_legal_actions();
-    if (!legalActions.includes(column)) {
+    if (!legalActions.includes(action)) {
       reply.code(400);
       return {
         status: 'error',
-        message: `Illegal move: column ${column} not available`,
+        message: `Illegal move: action ${action} not available`,
       };
     }
 
     try {
-      game.step(column);
+      game.step(action);
 
       const history = dbGame.history;
-      history.push(game.get_board_state().board);
-
+      const bs =
+        dbGame.gameType === 'chess'
+          ? game.get_board_state()
+          : (game.get_board_state() as any).board;
+      if (dbGame.gameType === 'chess') {
+        (bs as any).last_action = action;
+      }
+      history.push(bs);
       const isTerm = game.is_terminal();
+      let winner: number | null = dbGame.winner ?? null;
+      let winReason: string | null = dbGame.winReason ?? null;
+
+      if (isTerm && dbGame.gameType === 'chess') {
+        const boardState = game.get_board_state() as any;
+        const ChessModule = await import('chess.js');
+        const chessObj = new ChessModule.Chess(boardState.fen);
+        if (chessObj.isCheckmate()) {
+          // If it's checkmate, the player whose turn it is lost.
+          winner = chessObj.turn() === 'w' ? -1 : 1;
+          winReason = 'checkmate';
+        } else if (
+          chessObj.isDraw() ||
+          chessObj.isStalemate() ||
+          chessObj.isThreefoldRepetition() ||
+          chessObj.isInsufficientMaterial()
+        ) {
+          winner = 0; // Draw
+          winReason = 'draw';
+        }
+      }
+
       updateGame(
         id,
-        JSON.stringify(game.get_board_state().board),
+        JSON.stringify(
+          dbGame.gameType === 'chess'
+            ? game.get_board_state()
+            : (game.get_board_state() as any).board,
+        ),
         game.get_current_player(),
         isTerm,
         JSON.stringify(history),
+        winner,
+        winReason,
       );
 
       const newState = {
-        board: game.get_board_state().board,
+        board:
+          dbGame.gameType === 'chess'
+            ? (game.get_board_state() as any).board
+            : (game.get_board_state() as any).board,
+        fen:
+          dbGame.gameType === 'chess'
+            ? (game.get_board_state() as any).fen
+            : undefined,
+        gameType: dbGame.gameType,
         legal_actions: game.get_legal_actions(),
         is_terminal: isTerm,
         current_player: game.get_current_player(),
         history: history,
         status: 'ok',
-        player_column: column,
-        surrender_winner: null,
+        player_action: action,
+        surrender_winner: winner,
+        win_reason: winReason,
       };
       broadcastState(id, newState);
 
       if (!isTerm) {
         const nextPlayer = game.get_current_player();
-        const nextType = nextPlayer === 1 ? dbGame.p1Type : dbGame.p2Type;
+        // Chess: 0=white=p1, 1=black=p2. Connect4: 1=p1, -1=p2.
+        const nextIsP1 =
+          dbGame.gameType === 'chess' ? nextPlayer === 0 : nextPlayer === 1;
+        const nextType = nextIsP1 ? dbGame.p1Type : dbGame.p2Type;
         if (nextType === 'ai') {
           setTimeout(() => playAITurn(id), 100);
         }
       } else {
-        const subs = subscriptions.get(id);
-        if (!subs || subs.size === 0) {
-          deleteGame(id);
-        }
+        // Do not immediately delete the game to allow fetching status
       }
 
       return newState;
@@ -478,32 +661,39 @@ export default async function gameRoutes(server: FastifyInstance) {
     }
 
     let surrenderingPlayer = 0;
-    if (playerId === dbGame.p1Id) surrenderingPlayer = 1;
-    else if (playerId === dbGame.p2Id) surrenderingPlayer = -1;
+    if (dbGame.p1Id && playerId.includes(dbGame.p1Id)) surrenderingPlayer = 1;
+    else if (dbGame.p2Id && playerId.includes(dbGame.p2Id))
+      surrenderingPlayer = -1;
     else {
       reply.code(403);
       return { status: 'error', message: 'Not your game or invalid player ID' };
     }
 
     const winner = surrenderingPlayer === 1 ? -1 : 1;
+    const winReason = 'surrender';
 
     updateGame(
       id,
-      JSON.stringify(dbGame.board),
+      JSON.stringify(dbGame.board), // dbGame.board is already an object now! Wait, no, dbGame.board in the object is an object because we used JSON.parse(row.board) in getGame!
+      // WAIT! If dbGame.board is an object, then JSON.stringify(dbGame.board) is correct!
       dbGame.currentPlayer,
       true,
       JSON.stringify(dbGame.history),
       winner,
+      winReason,
     );
 
     const newState = {
-      board: dbGame.board,
+      board: dbGame.gameType === 'chess' ? dbGame.board.board : dbGame.board,
+      fen: dbGame.gameType === 'chess' ? dbGame.board.fen : undefined,
+      gameType: dbGame.gameType,
       legal_actions: [],
       is_terminal: true,
       current_player: dbGame.currentPlayer,
       history: dbGame.history,
       status: 'ok',
       surrender_winner: winner,
+      win_reason: winReason,
     };
     broadcastState(id, newState);
 
@@ -538,29 +728,51 @@ export default async function gameRoutes(server: FastifyInstance) {
 
     const history = dbGame.history.slice(0, index + 1);
     const newBoard = history[history.length - 1];
-    const game = new Connect4(newBoard);
+    let game;
+    if (dbGame.gameType === 'chess') {
+      game = new ChessBoard(newBoard.fen);
+    } else {
+      game = new Connect4(newBoard);
+    }
 
     updateGame(
       id,
-      JSON.stringify(game.get_board_state().board),
+      JSON.stringify(
+        dbGame.gameType === 'chess'
+          ? game.get_board_state()
+          : (game.get_board_state() as any).board,
+      ),
       game.get_current_player(),
-      game.is_terminal(),
+      false,
       JSON.stringify(history),
     );
 
     const newState = {
-      board: game.get_board_state().board,
+      board:
+        dbGame.gameType === 'chess'
+          ? (game.get_board_state() as any).board
+          : (game.get_board_state() as any).board,
+      fen:
+        dbGame.gameType === 'chess'
+          ? (game.get_board_state() as any).fen
+          : undefined,
+      gameType: dbGame.gameType,
       legal_actions: game.get_legal_actions(),
       is_terminal: game.is_terminal(),
       current_player: game.get_current_player(),
       history: history,
       status: 'ok',
       surrender_winner: null,
+      win_reason: null,
+      player_action:
+        dbGame.gameType === 'chess' ? (newBoard as any).last_action : undefined,
     };
     broadcastState(id, newState);
 
     const currentPlayer = game.get_current_player();
-    const currentType = currentPlayer === 1 ? dbGame.p1Type : dbGame.p2Type;
+    const isP1 =
+      dbGame.gameType === 'chess' ? currentPlayer === 0 : currentPlayer === 1;
+    const currentType = isP1 ? dbGame.p1Type : dbGame.p2Type;
     if (currentType === 'ai' && !game.is_terminal()) {
       setTimeout(() => playAITurn(id), 100);
     }
@@ -574,7 +786,10 @@ export default async function gameRoutes(server: FastifyInstance) {
     for (const g of activeGames) {
       const dbGame = getGame(g.id);
       if (dbGame) {
-        const isP1 = dbGame.currentPlayer === 1;
+        const isP1 =
+          dbGame.gameType === 'chess'
+            ? dbGame.currentPlayer === 0
+            : dbGame.currentPlayer === 1;
         const currentType = isP1 ? dbGame.p1Type : dbGame.p2Type;
         if (currentType === 'ai') {
           setTimeout(() => playAITurn(g.id), 100);

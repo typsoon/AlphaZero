@@ -9,7 +9,7 @@ export default interface Game {
   // Apply the given action, modifying the game state
   step(action: number): void;
 
-  get_board_state(): { board: number[][] };
+  get_board_state(): { board: (number | string)[][] };
 
   get_current_player(): number;
 

@@ -20,3 +20,9 @@ perf_report.txt
 callgrind.out
 perf.data
 vgcore*
+instructions/
+cachegrind.out
+temporary_utils/
+out/
+.doit.db*
+pytorch_profile.json

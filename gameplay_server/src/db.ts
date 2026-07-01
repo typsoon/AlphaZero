@@ -18,13 +18,38 @@ db.exec(`
     p2_type TEXT NOT NULL,
     p2_agent TEXT,
     p2_id TEXT,
+    game_type TEXT NOT NULL DEFAULT 'connect4',
     history TEXT NOT NULL DEFAULT '[]',
-    winner INTEGER
+    winner INTEGER,
+    win_reason TEXT
   );
 `);
 
 try {
   db.exec('ALTER TABLE games ADD COLUMN winner INTEGER;');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+} catch (e) {
+  // The column already exists if this throws
+}
+
+try {
+  db.exec(
+    "ALTER TABLE games ADD COLUMN game_type TEXT NOT NULL DEFAULT 'connect4';",
+  );
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+} catch (e) {
+  // ignore
+}
+
+try {
+  db.exec('ALTER TABLE games ADD COLUMN winner INTEGER;');
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+} catch (e) {
+  // The column already exists if this throws
+}
+
+try {
+  db.exec('ALTER TABLE games ADD COLUMN win_reason TEXT;');
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
 } catch (e) {
   // The column already exists if this throws
@@ -91,6 +116,7 @@ export function createGame(
   p2Type: string,
   p2Agent: string | null,
   p2Id: string | null,
+  gameType: string,
   historyJson: string,
 ) {
   let id = generateGameId();
@@ -99,7 +125,7 @@ export function createGame(
   }
 
   const stmt = db.prepare(
-    'INSERT INTO games (id, board, current_player, finished, p1_type, p1_agent, p1_id, p2_type, p2_agent, p2_id, history, winner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO games (id, board, current_player, finished, p1_type, p1_agent, p1_id, p2_type, p2_agent, p2_id, game_type, history, winner, win_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   );
   stmt.run(
     id,
@@ -112,7 +138,9 @@ export function createGame(
     p2Type,
     p2Agent,
     p2Id,
+    gameType,
     historyJson,
+    null,
     null,
   );
   return id;
@@ -132,8 +160,10 @@ export function getGame(id: string) {
         p2_type: string;
         p2_agent: string | null;
         p2_id: string | null;
+        game_type: string;
         history: string;
         winner: number | null;
+        win_reason: string | null;
       }
     | undefined;
   if (!row) return null;
@@ -148,8 +178,10 @@ export function getGame(id: string) {
     p2Type: row.p2_type,
     p2Agent: row.p2_agent,
     p2Id: row.p2_id,
+    gameType: row.game_type,
     history: JSON.parse(row.history),
     winner: row.winner,
+    winReason: row.win_reason,
   };
 }
 
@@ -160,11 +192,20 @@ export function updateGame(
   finished: boolean,
   historyJson: string,
   winner: number | null = null,
+  winReason: string | null = null,
 ) {
   const stmt = db.prepare(
-    'UPDATE games SET board = ?, current_player = ?, finished = ?, history = ?, winner = ? WHERE id = ?',
+    'UPDATE games SET board = ?, current_player = ?, finished = ?, history = ?, winner = ?, win_reason = ? WHERE id = ?',
   );
-  stmt.run(boardJson, currentPlayer, finished ? 1 : 0, historyJson, winner, id);
+  stmt.run(
+    boardJson,
+    currentPlayer,
+    finished ? 1 : 0,
+    historyJson,
+    winner,
+    winReason,
+    id,
+  );
 }
 
 export function updateGamePlayers(
@@ -189,7 +230,7 @@ export function deleteGame(id: string) {
 
 export function getGames() {
   const stmt = db.prepare(
-    'SELECT id, p1_type, p1_agent, p2_type, p2_agent, finished FROM games',
+    'SELECT id, p1_type, p1_agent, p2_type, p2_agent, game_type, finished FROM games',
   );
   const rows = stmt.all() as {
     id: string;
@@ -197,6 +238,7 @@ export function getGames() {
     p1_agent: string | null;
     p2_type: string;
     p2_agent: string | null;
+    game_type: string;
     finished: number;
   }[];
   return rows.map((r) => ({
@@ -205,6 +247,7 @@ export function getGames() {
     p1Agent: r.p1_agent,
     p2Type: r.p2_type,
     p2Agent: r.p2_agent,
+    gameType: r.game_type,
     finished: r.finished === 1,
   }));
 }

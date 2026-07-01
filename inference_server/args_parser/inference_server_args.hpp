@@ -7,6 +7,7 @@ struct InferenceServerArgs {
     std::string network_path;
     std::string device = "cuda";
     std::string socket = "";
+    std::string game = "connect4";
     int mcts_search_depth{800};
     int mcts_batch_size{32};
 };

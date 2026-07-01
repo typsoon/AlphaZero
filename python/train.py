@@ -144,7 +144,7 @@ def self_play_and_train_loop(
     for _ in range(loop_iterations):
         self_play_method(
             game=game,
-            network_path=checkpoint_manager.get_latest_scripted_checkpoint_file(),
+            network_path=checkpoint_manager.get_latest_inference_model_file(),
             replay_buf=replay_buffer,
             num_games=games_in_each_iteration,
             thread_count=thread_count,

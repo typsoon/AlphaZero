@@ -8,13 +8,20 @@
 namespace {
 
 int run_server(const InferenceServerArgs &args) {
-    auto schema_path = std::filesystem::path(ALPHAZERO_REPO_ROOT) / "game_states" / "connect4.json";
+    auto schema_path =
+        std::filesystem::path(ALPHAZERO_REPO_ROOT) / "game_states" / (args.game + ".json");
 
-    set_up_and_run_server<ModelWrapper, SchemaValidator>(
-        args.socket,
-        create_connect4_model_wrapper(args.network_path, args.device, args.mcts_search_depth,
-                                      args.mcts_batch_size),
-        get_schema_validator(schema_path));
+    std::shared_ptr<ModelWrapper> wrapper;
+    if (args.game == "chess") {
+        wrapper = create_chess_model_wrapper(args.network_path, args.device, args.mcts_search_depth,
+                                             args.mcts_batch_size);
+    } else {
+        wrapper = create_connect4_model_wrapper(args.network_path, args.device,
+                                                args.mcts_search_depth, args.mcts_batch_size);
+    }
+
+    set_up_and_run_server<ModelWrapper, SchemaValidator>(args.socket, wrapper,
+                                                         get_schema_validator(schema_path));
     spdlog::info("network_path={}\ndevice={}\nsocket={}\nmcts_search_depth={}\nmcts_batch_size={}",
                  args.network_path, args.device, args.socket, args.mcts_search_depth,
                  args.mcts_batch_size);
