@@ -9,9 +9,11 @@
 #include <numeric>
 #include <torch/csrc/jit/serialization/import.h>
 #include <torch/script.h>
+#include <unordered_map>
 
 #include <random>
 
+// TODO: test as many methods as you can
 struct MCTS::Node {
     Node **children;
     int action_size;
@@ -38,8 +40,10 @@ struct MCTS::Node {
     bool terminal() const;
     bool is_expanded() const;
 
+    // TODO: test this
     std::pair<int, Node *> select_child(float exploration_weight) const;
 
+    // TODO: test this
     static void backpropagate(Node *node, float value, bool vloss = false);
 };
 
@@ -145,25 +149,40 @@ void MCTS::evaluate_batch(std::vector<std::pair<Node *, std::shared_ptr<Game>>> 
     if (leaves.empty())
         return;
 
+    // Multiple simulations in one round can walk down to the same not-yet-expanded
+    // node - expansion only happens after the whole round is collected here, so two
+    // simulations that both reach it first both see it as unexpanded and both get
+    // added as leaves. That's the *only* way a leaf can show up already-expanded in
+    // the loop below (a node from an earlier round is never re-added - the tree walk
+    // always stops at the first unexpanded node). Since both occurrences are the
+    // identical board position, dedupe by Node* so inference only runs once per
+    // unique position; each occurrence still backpropagates on its own below, since
+    // each carries its own virtual loss from selection.
     std::vector<const GameState *> states;
-    states.reserve(leaves.size());
-    for (auto &[leaf, game] : leaves) {
-        states.push_back(game->get_canonical_state().get());
+    std::vector<size_t> result_index(leaves.size());
+    std::unordered_map<Node *, size_t> seen;
+    seen.reserve(leaves.size());
+    for (size_t i = 0; i < leaves.size(); ++i) {
+        Node *node = leaves[i].first;
+        auto [it, inserted] = seen.try_emplace(node, states.size());
+        result_index[i] = it->second;
+        if (inserted) {
+            states.push_back(leaves[i].second->get_canonical_state().get());
+        }
     }
 
     auto outputs = network->infer(states);
 
     for (size_t i = 0; i < leaves.size(); ++i) {
         Node *node = leaves[i].first;
-        auto game = leaves[i].second;
-        const auto &res = outputs[i];
+        const auto &res = outputs[result_index[i]];
 
         if (node->is_expanded()) {
             Node::backpropagate(node, res.value, true);
             continue;
         }
 
-        auto policy = get_policy_from_logits(res, game->get_legal_actions(), false);
+        auto policy = get_policy_from_logits(res, false);
 
         node->expand(policy, pool);
         Node::backpropagate(node, res.value, true);
@@ -178,7 +197,7 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
     auto inference_res =
         network->infer(std::vector<const GameState *>{game.get_canonical_state().get()});
     float root_value = inference_res.front().value;
-    auto p_init = get_policy_from_logits(inference_res.front(), game.get_legal_actions(), true);
+    auto p_init = get_policy_from_logits(inference_res.front(), true);
     root_node.expand(p_init, &pool);
 
     int simulations_done = 0;
@@ -231,27 +250,30 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
     return {pi, root_value};
 }
 
-std::vector<std::pair<int, float>>
-MCTS::get_policy_from_logits(const inference_result &res, const std::vector<int> &legal_actions,
-                             bool dirichletNoise) const {
+std::vector<std::pair<int, float>> MCTS::get_policy_from_logits(const inference_result &res,
+                                                                bool dirichletNoise) const {
     // We omit libtorch (ATen) operations here (like torch::tensor, torch::softmax)
     // because the ATen dispatcher overhead and allocations are extremely slow for
     // small vectors on the CPU (e.g., 7 elements for Connect4). A pure C++
     // implementation is ~6x faster and avoids creating intermediate tensors.
     // It operates on the same 32-bit floats natively, so no precision is lost.
 
+    // res.legal_actions[j]/res.legal_action_logits[j] are computed by Inferer itself
+    // (via GameState::get_legal_actions()), so no separate legal-actions lookup is
+    // needed here.
+    const auto &legal_actions = res.legal_actions;
     std::vector<std::pair<int, float>> policy_vec;
     policy_vec.reserve(legal_actions.size());
 
     float max_logit = -std::numeric_limits<float>::infinity();
-    for (auto a : legal_actions) {
-        max_logit = std::max(res[a], max_logit);
+    for (float logit : res.legal_action_logits) {
+        max_logit = std::max(logit, max_logit);
     }
 
     float sum_exp = 0.0f;
-    for (int a : legal_actions) {
-        float p = std::exp(res[a] - max_logit);
-        policy_vec.emplace_back(a, p);
+    for (size_t j = 0; j < legal_actions.size(); ++j) {
+        float p = std::exp(res.legal_action_logits[j] - max_logit);
+        policy_vec.emplace_back(legal_actions[j], p);
         sum_exp += p;
     }
 
@@ -272,6 +294,7 @@ MCTS::get_policy_from_logits(const inference_result &res, const std::vector<int>
 
     return policy_vec;
 }
+
 std::vector<float> MCTS::sample_dirichlet(const std::vector<float> &alpha) { // NOLINT
     static thread_local std::mt19937 gen{std::random_device{}()};
     std::vector<float> x(alpha.size());

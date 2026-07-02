@@ -315,6 +315,21 @@
             background-color: var(--player2);
         }
 
+        .chess-board {
+            width: 320px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+
+        .chess-move-label {
+            width: auto;
+            min-width: 60px;
+            font-family: monospace;
+        }
+
+        .chess-move-label.expected-move {
+            color: var(--success);
+        }
+
         /* Animations */
         @keyframes fadeInDown {
             from { opacity: 0; transform: translateY(-20px); }

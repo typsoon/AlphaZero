@@ -173,6 +173,7 @@ std::shared_ptr<const GameState> Connect4::get_canonical_state() const {
     return shared_from_this();
 }
 
+// TODO: utilize state dim
 std::vector<int64_t> Connect4::get_state_shape() const {
     return {1, ROWS, COLS};
 }

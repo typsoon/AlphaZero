@@ -52,15 +52,46 @@ def wait_for_server(socket_path, timeout=30):
     return False
 
 
+def build_game_state(game, data):
+    """Build the `game_state` payload sent to /predict from a puzzle's JSON data."""
+    if game == "chess":
+        return {
+            "board": data["board"],
+            "player": data["player"],
+            "en_passant": data["en_passant"],
+            "castling": data["castling"],
+        }
+    return {"board": data["board"]}
+
+
+def choose_move(game, policy):
+    """Pick the argmax move from the /predict response's `policy` field.
+
+    Connect4 returns a dense array (argmax over indices). Chess returns a sparse list of
+    {"index": ..., "value": ...} entries (only legal moves have nonzero probability), so
+    the chosen move is the `index` of the entry with the highest `value`.
+    """
+    if game == "chess":
+        best = max(policy, key=lambda entry: entry["value"])
+        return best["index"]
+    return max(range(len(policy)), key=lambda i: policy[i])
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate AlphaZero on Connect4 puzzles."
+        description="Evaluate AlphaZero on puzzles for a given game."
     )
     parser.add_argument(
         "--network-path", required=True, help="Path to the trained network file"
     )
     parser.add_argument(
         "--inference-binary", required=True, help="Path to the inference server binary"
+    )
+    parser.add_argument(
+        "--game",
+        default="connect4",
+        choices=["connect4", "chess"],
+        help="Which game's puzzles to evaluate (default: connect4)",
     )
     parser.add_argument(
         "--mcts-search-depth", type=int, default=800, help="MCTS search depth"
@@ -73,7 +104,7 @@ def main():
     )
     args = parser.parse_args()
 
-    temp_dir = tempfile.mkdtemp(prefix="inference_service_connect4_")
+    temp_dir = tempfile.mkdtemp(prefix=f"inference_service_{args.game}_")
     socket_path = str(Path(temp_dir) / f"socket_{uuid.uuid4().hex[:8]}.sock")
 
     cmd = [args.inference_binary]
@@ -90,6 +121,8 @@ def main():
             socket_path,
             "--mcts-search-depth",
             str(args.mcts_search_depth),
+            "--game",
+            args.game,
         ]
     )
 
@@ -117,7 +150,7 @@ def main():
         print("Server is ready. Starting evaluation...")
 
         game_files = list(
-            (PROJ_ROOT / "performance_evaluation" / "games" / "connect4").glob(
+            (PROJ_ROOT / "performance_evaluation" / "games" / args.game).glob(
                 "*/*.json"
             )
         )
@@ -131,7 +164,7 @@ def main():
             board = data["board"]
             expected_moves = data["expected_moves"]
 
-            payload = {"game_state": {"board": board}}
+            payload = {"game_state": build_game_state(args.game, data)}
 
             response = make_unix_request(socket_path, "POST", "/predict", payload)
 
@@ -140,24 +173,25 @@ def main():
                 continue
 
             policy = response["policy"]
-            chosen_move = max(range(len(policy)), key=lambda i: policy[i])
+            chosen_move = choose_move(args.game, policy)
 
             value = response.get("value", 0.0)
 
             passed = chosen_move in expected_moves
 
-            results.append(
-                {
-                    "test_name": test_name,
-                    "category": category,
-                    "board": board,
-                    "expected_moves": expected_moves,
-                    "network_policy": policy,
-                    "network_value": value,
-                    "chosen_move": chosen_move,
-                    "passed": passed,
-                }
-            )
+            result = {
+                "test_name": test_name,
+                "category": category,
+                "board": board,
+                "expected_moves": expected_moves,
+                "network_policy": policy,
+                "network_value": value,
+                "chosen_move": chosen_move,
+                "passed": passed,
+            }
+            if args.game == "chess":
+                result["player"] = data["player"]
+            results.append(result)
 
             if passed:
                 if args.verbose:

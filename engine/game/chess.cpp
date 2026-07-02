@@ -232,6 +232,7 @@ void Chess::write_canonical_state(float *out_buffer) const {
     }
 }
 
+// TODO: utilize state_dim
 std::vector<int64_t> Chess::get_state_shape() const {
     return {19, 8, 8};
 }

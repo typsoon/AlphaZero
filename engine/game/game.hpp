@@ -13,6 +13,16 @@ class GameState {
     virtual ~GameState() = default;
     virtual void write_canonical_state(float *out_buffer) const = 0;
     virtual std::vector<int64_t> get_state_shape() const = 0;
+
+    // Return a list of legal action indices for this state. Declared here (rather
+    // than only on Game) so the inference layer can compute legal actions itself
+    // from the GameState pointers it already holds, instead of requiring every
+    // caller to compute and thread them through separately. Every concrete
+    // GameState in this codebase is actually a Game under the hood (see
+    // Game::get_canonical_state(), which returns shared_from_this()), so this
+    // doesn't require duplicating any move-generation logic - Game's existing
+    // override already satisfies it.
+    virtual std::vector<int> get_legal_actions() const = 0;
 };
 
 // Abstract base class for Games
@@ -31,8 +41,8 @@ class Game : public GameState, public std::enable_shared_from_this<Game> {
     // Return the dimension of the action space (number of possible distinct actions)
     virtual int getActionSize() const = 0;
 
-    // Return a list of legal action indices (returns a vector of valid actions)
-    virtual std::vector<int> get_legal_actions() const = 0;
+    // get_legal_actions() is declared on GameState above; Chess/Connect4's override
+    // of it satisfies this class's requirement too.
 
     // Apply the given action, modifying the game state
     virtual void step(int action) = 0;

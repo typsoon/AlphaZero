@@ -15,8 +15,9 @@ def main():
     parser.add_argument(
         "--max_first_dim",
         type=int,
-        default=8192,
-        help="Max first dim of input",
+        default=None,
+        help="Max first dim of input (max TensorRT batch size). Defaults to "
+        "AlphaZeroNetwork.tensorrt_and_save_network's own default if not set.",
     )
     args = parser.parse_args()
     logging.basicConfig(
@@ -67,7 +68,10 @@ def main():
                         Path(trt_path).name,
                     )
                     try:
-                        network.tensorrt_and_save_network(trt_path, args.max_first_dim)
+                        if args.max_first_dim is not None:
+                            network.tensorrt_and_save_network(trt_path, args.max_first_dim)
+                        else:
+                            network.tensorrt_and_save_network(trt_path)
                     except Exception as e:
                         logger.error(
                             "    Failed to compile TRT engine: %s",

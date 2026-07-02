@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 import json
-import glob
 import re
-import os
+from pathlib import Path
 
 
 def format_json_string(json_str):
@@ -15,19 +14,16 @@ def format_json_string(json_str):
 
 
 def main():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    pattern = os.path.join(base_dir, "games", "connect4", "*", "*.json")
-    files = glob.glob(pattern)
+    base_dir = Path(__file__).resolve().parent
+    files = (base_dir / "games").glob("*/*/*.json")
 
     for filepath in files:
-        with open(filepath, "r") as f:
-            data = json.load(f)
+        data = json.loads(filepath.read_text())
 
         json_str = json.dumps(data, indent=2)
         formatted_str = format_json_string(json_str)
 
-        with open(filepath, "w") as f:
-            f.write(formatted_str + "\n")
+        filepath.write_text(formatted_str + "\n")
 
 
 if __name__ == "__main__":

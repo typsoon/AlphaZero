@@ -10,6 +10,9 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Performance Evaluation Report</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
     <style>
 %STYLE_CSS%
     </style>
@@ -90,7 +93,56 @@ HTML_TEMPLATE = """
             });
         }
 
-        function renderBoard(board) {
+        function isChessTest(test) {
+            return Array.isArray(test.board) && test.board.length === 8 && Array.isArray(test.board[0]) && test.board[0].length === 8;
+        }
+
+        function chessSquareName(r, c) {
+            return String.fromCharCode(97 + c) + (8 - r);
+        }
+
+        // Mirrors Chess::decode_action in engine/game/chess.cpp:
+        // action = (from_square*64 + to_square)*5 + promotion, from/to = row*8+col.
+        function decodeChessAction(action) {
+            const promo = action % 5;
+            let rest = Math.floor(action / 5);
+            const to = rest % 64;
+            const from = Math.floor(rest / 64);
+            const r1 = Math.floor(from / 8), c1 = from % 8;
+            const r2 = Math.floor(to / 8), c2 = to % 8;
+            return { r1, c1, r2, c2, promo };
+        }
+
+        const PROMO_SUFFIX = { 0: '', 1: '=Q', 2: '=R', 3: '=N', 4: '=B' };
+
+        function chessActionToLabel(action) {
+            const { r1, c1, r2, c2, promo } = decodeChessAction(action);
+            return `${chessSquareName(r1, c1)}${chessSquareName(r2, c2)}${PROMO_SUFFIX[promo]}`;
+        }
+
+        // chessboard.js wants a position object like {a1: 'wR', e4: 'bP', ...}.
+        const CHESS_PIECE_LETTERS = { 1: 'P', 2: 'N', 3: 'B', 4: 'R', 5: 'Q', 6: 'K' };
+
+        function positionFromBoard(board) {
+            const pos = {};
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    const piece = board[r][c] || 0;
+                    if (piece === 0) continue;
+                    const color = piece > 0 ? 'w' : 'b';
+                    pos[chessSquareName(r, c)] = color + CHESS_PIECE_LETTERS[Math.abs(piece)];
+                }
+            }
+            return pos;
+        }
+
+        // Boards rendered via chessboard.js are initialized separately (after the
+        // placeholder div is actually attached to the document) - see renderTestList.
+        function renderBoard(board, chessBoardId) {
+            if (isChessTest({ board })) {
+                return `<div id="${chessBoardId}" class="chess-board"></div>`;
+            }
+
             let html = '<div class="connect4-board">';
             for (let r = 0; r < 6; r++) {
                 for (let c = 0; c < 7; c++) {
@@ -122,6 +174,28 @@ HTML_TEMPLATE = """
             return html;
         }
 
+        // Chess policy is sparse: [{index, value}, ...] over legal moves only. Show the
+        // top 5 by probability, decoded to algebraic-ish move labels (e.g. "e2e4").
+        function renderTopChessMoves(policy, expectedMoves) {
+            const top = [...policy].sort((a, b) => b.value - a.value).slice(0, 5);
+            let html = '';
+            top.forEach(({ index, value }) => {
+                const percentage = (value * 100).toFixed(1);
+                const label = chessActionToLabel(index);
+                const isExpected = expectedMoves.includes(index);
+                html += `
+                    <div class="policy-bar-container">
+                        <div class="policy-label chess-move-label ${isExpected ? 'expected-move' : ''}">${label}</div>
+                        <div class="policy-track">
+                            <div class="policy-fill" data-target="${percentage}%"></div>
+                        </div>
+                        <div class="policy-value">${percentage}%</div>
+                    </div>
+                `;
+            });
+            return html;
+        }
+
         function renderTestList(data) {
             const container = document.getElementById('testList');
             container.innerHTML = '';
@@ -136,20 +210,35 @@ HTML_TEMPLATE = """
                 item.className = 'test-item animate-fade-in';
                 item.style.animationDelay = `${Math.min(index * 0.05, 0.5)}s`;
                 
-                const expectedStr = Array.isArray(test.expected_moves) ? test.expected_moves.join(', ') : test.expected_moves;
-                const policyHtml = renderPolicy(test.network_policy);
-                const boardHtml = renderBoard(test.board);
+                const isChess = isChessTest(test);
+                const chessBoardId = `chess-board-${index}`;
 
-                let count1 = 0;
-                let count2 = 0;
-                for (let r = 0; r < 6; r++) {
-                    for (let c = 0; c < 7; c++) {
-                        const cell = test.board[r] ? (test.board[r][c] || 0) : 0;
-                        if (cell === 1) count1++;
-                        else if (cell === 2) count2++;
+                const expectedStr = isChess
+                    ? test.expected_moves.map(a => `${chessActionToLabel(a)} (${a})`).join(', ')
+                    : (Array.isArray(test.expected_moves) ? test.expected_moves.join(', ') : test.expected_moves);
+                const chosenStr = isChess
+                    ? `${chessActionToLabel(test.chosen_move)} (${test.chosen_move})`
+                    : test.chosen_move;
+                const policyHtml = isChess
+                    ? renderTopChessMoves(test.network_policy, test.expected_moves)
+                    : renderPolicy(test.network_policy);
+                const boardHtml = renderBoard(test.board, chessBoardId);
+
+                let playerToMove;
+                if (isChess) {
+                    playerToMove = test.player === 0 ? "White" : "Black";
+                } else {
+                    let count1 = 0;
+                    let count2 = 0;
+                    for (let r = 0; r < 6; r++) {
+                        for (let c = 0; c < 7; c++) {
+                            const cell = test.board[r] ? (test.board[r][c] || 0) : 0;
+                            if (cell === 1) count1++;
+                            else if (cell === 2) count2++;
+                        }
                     }
+                    playerToMove = count1 === count2 ? "Player 1 (Red)" : "Player 2 (Yellow)";
                 }
-                const playerToMove = count1 === count2 ? "Player 1 (Red)" : "Player 2 (Yellow)";
 
                 item.innerHTML = `
                     <div class="test-header">
@@ -172,7 +261,7 @@ HTML_TEMPLATE = """
                                 </div>
                                 <div class="data-row">
                                     <span style="color: #94a3b8">Chosen Move:</span>
-                                    <span style="font-weight: 600; color: ${test.passed ? 'var(--success)' : 'var(--danger)'}">${test.chosen_move}</span>
+                                    <span style="font-weight: 600; color: ${test.passed ? 'var(--success)' : 'var(--danger)'}">${chosenStr}</span>
                                 </div>
                                 <div class="data-row">
                                     <span style="color: #94a3b8">Network Value:</span>
@@ -182,8 +271,8 @@ HTML_TEMPLATE = """
                                     <span style="color: #94a3b8">Player to Move:</span>
                                     <span style="font-weight: 600">${playerToMove}</span>
                                 </div>
-                                
-                                <h4 style="margin-top: 2rem;">Network Policy</h4>
+
+                                <h4 style="margin-top: 2rem;">${isChess ? 'Top 5 Moves' : 'Network Policy'}</h4>
                                 <div class="policy-wrapper">
                                     ${policyHtml}
                                 </div>
@@ -225,6 +314,15 @@ HTML_TEMPLATE = """
                 });
 
                 container.appendChild(item);
+
+                if (isChess) {
+                    Chessboard(chessBoardId, {
+                        position: positionFromBoard(test.board),
+                        draggable: false,
+                        showNotation: true,
+                        pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+                    });
+                }
             });
         }
 

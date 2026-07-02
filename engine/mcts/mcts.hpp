@@ -13,8 +13,15 @@ using std::make_unique;
 using std::unique_ptr;
 using std::vector;
 
-constexpr size_t default_arena_size_in_bytes = static_cast<const size_t>(64 * 1024 * 1024);
+// Sized for chess, the larger of the two games: Node::expand() allocates a
+// children array sized to the full action space (20480 * 8 bytes = ~160KB) per
+// expansion, so at the default 800 simulations/search a single search() call can
+// need up to ~130MB. The arena is fully reset (pool.release()) at the start of
+// every search() call, so undersizing it means most expansions overflow into the
+// upstream allocator (malloc) on effectively every move.
+constexpr size_t default_arena_size_in_bytes = static_cast<const size_t>(256 * 1024 * 1024);
 
+// TODO: test as many methods as you can
 class MCTS {
     using InfererPtr = unique_ptr<Inferer>;
     InfererPtr network;
@@ -45,7 +52,6 @@ class MCTS {
                         std::pmr::memory_resource *pool);
 
     std::vector<std::pair<int, float>> get_policy_from_logits(const inference_result &res,
-                                                              const std::vector<int> &legal_actions,
                                                               bool dirichletNoise = false) const;
 
     static std::vector<float> sample_dirichlet(const std::vector<float> &alpha);

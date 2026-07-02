@@ -97,7 +97,7 @@ class AlphaZeroNetwork(nn.Module):
         scripted_model = torch.jit.script(self)
         scripted_model.save(fspath(path))
 
-    def tensorrt_and_save_network(self, path: PathLike, max_first_dim_of_input=8192):
+    def tensorrt_and_save_network(self, path: PathLike, max_first_dim_of_input=32000):
         # This has to be imported in order to load tensorrt networks
         import torch_tensorrt  # noqa: F811
 

@@ -11,7 +11,10 @@
 int main(int argc, char *argv[]) {
     if (argc < 5) {
         std::cerr << "Usage: " << argv[0]
-                  << " <game> <network_path> <num_games> <thread_count> [max_moves] [kineto_out]\n";
+                  << " <game> <network_path> <num_games> <thread_count> [max_moves] "
+                     "[kineto_out] [mcts_num_simulations] [mcts_batch_size]\n"
+                  << "  Pass an empty string (\"\") for kineto_out to skip kineto profiling "
+                     "while still setting mcts_num_simulations/mcts_batch_size.\n";
         return 1;
     }
 
@@ -24,10 +27,12 @@ int main(int argc, char *argv[]) {
         max_moves = std::stoi(argv[5]);
     }
 
-    bool use_kineto = (argc >= 7);
-    std::string kineto_out_file = "";
+    std::string kineto_out_file = (argc >= 7) ? argv[6] : "";
+    bool use_kineto = !kineto_out_file.empty();
+    int mcts_num_simulations = (argc >= 8) ? std::stoi(argv[7]) : 800;
+    int mcts_batch_size = (argc >= 9) ? std::stoi(argv[8]) : 32;
+
     if (use_kineto) {
-        kineto_out_file = argv[6];
         torch::profiler::impl::ProfilerConfig config(torch::profiler::impl::ProfilerState::KINETO,
                                                      false, // report_input_shapes
                                                      false, // profile_memory
@@ -54,10 +59,12 @@ int main(int argc, char *argv[]) {
     ReplayBuffer replay_buffer(1000000);
 
     std::cout << "Starting self play profiling with " << num_games << " games on " << thread_count
-              << " threads... (max_moves=" << max_moves << ")" << '\n';
+              << " threads... (max_moves=" << max_moves
+              << ", mcts_num_simulations=" << mcts_num_simulations
+              << ", mcts_batch_size=" << mcts_batch_size << ")" << '\n';
 
-    self_play(initial_game, network_path, replay_buffer, num_games, thread_count, 800, 32,
-              max_moves);
+    self_play(initial_game, network_path, replay_buffer, num_games, thread_count,
+              mcts_num_simulations, mcts_batch_size, max_moves);
 
     if (use_kineto) {
         auto profiler_result = torch::autograd::profiler::disableProfiler();

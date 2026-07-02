@@ -1,9 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
+// jQuery must be attached to `window` before chessboard.js's script runs.
+import $ from './chessboardSetup';
+import '@chrisoakman/chessboardjs/dist/chessboard-1.0.0.css';
+import '@chrisoakman/chessboardjs/dist/chessboard-1.0.0.js';
+import type {
+  ChessBoardInstance,
+  BoardConfig,
+  BoardPositionType,
+  Square,
+  Piece,
+} from 'chessboardjs';
+
+// chessboard.js is a legacy script that attaches itself to `window.Chessboard`
+// (there is no ES module export), so we grab the factory off `window`.
+const ChessboardFactory = (window as unknown as { Chessboard: ChessboardCtor })
+  .Chessboard;
+type ChessboardCtor = (
+  containerEl: HTMLElement,
+  config?: BoardConfig,
+) => ChessBoardInstance;
 
 const emit = defineEmits(['back']);
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
 
 const apiBase = '/api';
 let ws: WebSocket | null = null;
@@ -337,16 +356,6 @@ function handleChessPuzzleUpload(e: Event) {
   reader.readAsText(file);
 }
 
-const dragState = ref<{
-  piece: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  tweakX: number;
-  tweakY: number;
-} | null>(null);
-
 const isBoardFlipped = computed(() => {
   if (p1Type.value === 'human' && p2Type.value === 'human') {
     return currentPlayer.value === 1;
@@ -357,10 +366,194 @@ const isBoardFlipped = computed(() => {
   return false;
 });
 
-const displayBoard = computed(() => {
-  if (!board.value) return [];
-  if (!isBoardFlipped.value) return board.value;
-  return [...board.value].map((row) => [...row].reverse()).reverse();
+// --- chessboard.js integration (live game board) ---
+const boardContainer = ref<HTMLDivElement | null>(null);
+let cbBoard: ChessBoardInstance | null = null;
+// The move just accepted by onDrop, applied to a local clone of `board`.
+// `board.value` itself isn't touched inside onDrop because chessboard.js is
+// still mid-animation at that point; onSnapEnd is the safe moment to commit
+// it (see comment there). The authoritative server push (websocket/fetch)
+// will correct anything this simple src->dst patch gets wrong, e.g.
+// castling's rook move, en passant capture, or the promoted piece type.
+let pendingOptimisticBoard: string[][] | null = null;
+
+/** Our internal board is a string[][] grid with row 0 = rank 8, col 0 = file a. */
+function squareToRowCol(square: string): { row: number; col: number } {
+  const col = square.charCodeAt(0) - 97; // 'a' -> 0
+  const rank = parseInt(square[1], 10);
+  return { row: 8 - rank, col };
+}
+
+function rowColToSquare(row: number, col: number): Square {
+  const file = String.fromCharCode(97 + col);
+  const rank = 8 - row;
+  return `${file}${rank}` as Square;
+}
+
+function cbPieceTheme(piece: string) {
+  const color = piece[0] === 'w' ? 'white' : 'black';
+  const nameMap: Record<string, string> = {
+    P: 'pawn',
+    R: 'rook',
+    N: 'knight',
+    B: 'bishop',
+    Q: 'queen',
+    K: 'king',
+  };
+  return `/pieces/${color}_${nameMap[piece[1]]}.svg`;
+}
+
+function boardToPosition(b: string[][]): BoardPositionType {
+  const pos: BoardPositionType = {};
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 8; col++) {
+      const cell = b[row]?.[col];
+      if (!cell || cell === ' ') continue;
+      const color = cell === cell.toUpperCase() ? 'w' : 'b';
+      const square = rowColToSquare(row, col);
+      pos[square] = `${color}${cell.toUpperCase()}` as Piece;
+    }
+  }
+  return pos;
+}
+
+function squareHasLegalMoves(row: number, col: number): boolean {
+  const from = row * 8 + col;
+  return legalActions.value.some(
+    (a) => Math.floor(Math.floor(a / 5) / 64) === from,
+  );
+}
+
+function clearLegalMoveHighlights() {
+  if (!boardContainer.value) return;
+  $(boardContainer.value)
+    .find('.legal-move-highlight, .selected-square-highlight')
+    .removeClass('legal-move-highlight selected-square-highlight');
+}
+
+function highlightLegalMoves(row: number, col: number) {
+  clearLegalMoveHighlights();
+  if (!boardContainer.value) return;
+  const $container = $(boardContainer.value);
+  const from = row * 8 + col;
+  $container
+    .find(`.square-${rowColToSquare(row, col)}`)
+    .addClass('selected-square-highlight');
+  for (const action of legalActions.value) {
+    const act = Math.floor(action / 5);
+    const actTo = act % 64;
+    const actFrom = Math.floor(act / 64);
+    if (actFrom !== from) continue;
+    const toRow = Math.floor(actTo / 8);
+    const toCol = actTo % 8;
+    const square = rowColToSquare(toRow, toCol);
+    $container.find(`.square-${square}`).addClass('legal-move-highlight');
+  }
+}
+
+watch(selectedSquare, (sel) => {
+  if (sel) highlightLegalMoves(sel.row, sel.col);
+  else clearLegalMoveHighlights();
+});
+
+function initChessBoard() {
+  if (!boardContainer.value || cbBoard) return;
+  const config: BoardConfig = {
+    draggable: true,
+    showNotation: true,
+    position: boardToPosition(board.value),
+    orientation: isBoardFlipped.value ? 'black' : 'white',
+    pieceTheme: cbPieceTheme as unknown as NonNullable<
+      BoardConfig['pieceTheme']
+    >,
+    onDragStart: ((source: string, _piece: string) => {
+      if (isTerminal.value) return false;
+      const { row, col } = squareToRowCol(source);
+      return squareHasLegalMoves(row, col);
+    }) as unknown as NonNullable<BoardConfig['onDragStart']>,
+    onDrop: ((source: string, target: string) => {
+      if (isTerminal.value) return 'snapback';
+      const from = squareToRowCol(source);
+      const to = squareToRowCol(target);
+      const actions = getLegalMoves(from.row, from.col, to.row, to.col);
+      if (actions.length === 0) return 'snapback';
+      if (actions.length === 1 && actions[0] % 5 === 0) {
+        const next = board.value.map((r) => [...r]);
+        const piece = next[from.row]?.[from.col] ?? ' ';
+        next[from.row][from.col] = ' ';
+        next[to.row][to.col] = piece;
+        pendingOptimisticBoard = next;
+        makeMove(actions[0]);
+        selectedSquare.value = null;
+        return undefined;
+      }
+      promotionDialog.value = { actions, row: to.row, col: to.col };
+      selectedSquare.value = null;
+      return 'snapback';
+    }) as unknown as NonNullable<BoardConfig['onDrop']>,
+    onSnapEnd: (() => {
+      // chessboard.js optimistically moves the piece locally on drop; sync
+      // our own board model to match (see `pendingOptimisticBoard` comment)
+      // and re-assert the position so any drift is corrected. The next
+      // server push will overwrite this with the authoritative state.
+      const synced = pendingOptimisticBoard ?? board.value;
+      pendingOptimisticBoard = null;
+      cbBoard?.position(boardToPosition(synced), false);
+      board.value = synced;
+    }) as unknown as NonNullable<BoardConfig['onSnapEnd']>,
+  };
+  cbBoard = ChessboardFactory(boardContainer.value, config);
+
+  // Layer click-to-move on top of chessboard.js (it has no built-in click API).
+  $(boardContainer.value).on('click', '.square-55d63', (event) => {
+    const square = $(event.currentTarget).attr('data-square');
+    if (!square) return;
+    const { row, col } = squareToRowCol(square);
+    handleSquareClick(row, col);
+  });
+
+  window.addEventListener('resize', onWindowResize);
+}
+
+function onWindowResize() {
+  cbBoard?.resize();
+}
+
+function destroyChessBoard() {
+  window.removeEventListener('resize', onWindowResize);
+  if (boardContainer.value) {
+    $(boardContainer.value).off('click');
+  }
+  cbBoard?.destroy();
+  cbBoard = null;
+}
+
+watch(currentMode, async (mode) => {
+  if (mode === 'game') {
+    await nextTick();
+    initChessBoard();
+  } else {
+    destroyChessBoard();
+  }
+});
+
+watch(board, (b) => {
+  cbBoard?.position(boardToPosition(b), true);
+});
+
+watch(isBoardFlipped, (flipped) => {
+  cbBoard?.orientation(flipped ? 'black' : 'white');
+});
+
+watch(lastAction, (action) => {
+  if (!boardContainer.value) return;
+  const $container = $(boardContainer.value);
+  $container.find('.last-move-highlight').removeClass('last-move-highlight');
+  if (!action) return;
+  const fromSquare = rowColToSquare(action.from.row, action.from.col);
+  const toSquare = rowColToSquare(action.to.row, action.to.col);
+  $container.find(`.square-${fromSquare}`).addClass('last-move-highlight');
+  $container.find(`.square-${toSquare}`).addClass('last-move-highlight');
 });
 
 onMounted(() => {
@@ -371,6 +564,7 @@ onUnmounted(() => {
   if (ws) {
     ws.close();
   }
+  destroyChessBoard();
 });
 
 async function fetchAgents() {
@@ -545,11 +739,7 @@ function handleSquareClick(row: number, col: number) {
   if (isTerminal.value) return;
 
   if (!selectedSquare.value) {
-    const from = row * 8 + col;
-    const hasMoves = legalActions.value.some(
-      (a) => Math.floor(Math.floor(a / 5) / 64) === from,
-    );
-    if (hasMoves) selectedSquare.value = { row, col };
+    if (squareHasLegalMoves(row, col)) selectedSquare.value = { row, col };
   } else {
     if (selectedSquare.value.row === row && selectedSquare.value.col === col) {
       selectedSquare.value = null;
@@ -569,82 +759,10 @@ function handleSquareClick(row: number, col: number) {
       } else {
         promotionDialog.value = { actions, row, col };
       }
+    } else if (squareHasLegalMoves(row, col)) {
+      selectedSquare.value = { row, col };
     } else {
-      const from = row * 8 + col;
-      const hasMoves = legalActions.value.some(
-        (a) => Math.floor(Math.floor(a / 5) / 64) === from,
-      );
-      if (hasMoves) selectedSquare.value = { row, col };
-      else selectedSquare.value = null;
-    }
-  }
-}
-
-function handleDragStart(row: number, col: number, event: DragEvent) {
-  if (isTerminal.value) {
-    event.preventDefault();
-    return;
-  }
-  const from = row * 8 + col;
-  const hasMoves = legalActions.value.some(
-    (a) => Math.floor(Math.floor(a / 5) / 64) === from,
-  );
-  if (hasMoves) {
-    selectedSquare.value = { row, col };
-    event.dataTransfer?.setData('text/plain', `${row},${col}`);
-    const target = event.target as HTMLElement;
-    if (target && event.dataTransfer) {
-      const rect = target.getBoundingClientRect();
-
-      // Use the preloaded transparent 1x1 image to disable the buggy native drag ghost entirely
-      event.dataTransfer.setDragImage(emptyDragImage, 0, 0);
-
-      const realCol = isBoardFlipped.value ? 7 - col : col;
-      const realRow = isBoardFlipped.value ? 7 - row : row;
-      const cellValue = board.value[realRow]?.[realCol] || ' ';
-
-      dragState.value = {
-        piece: getPieceImage(cellValue),
-        x: event.clientX,
-        y: event.clientY,
-        width: rect.width,
-        height: rect.height,
-        tweakX: -rect.width / 2,
-        tweakY: -rect.height / 2,
-      };
-    }
-  } else {
-    event.preventDefault();
-  }
-}
-
-function handleDrag(event: DragEvent) {
-  if (dragState.value && (event.clientX !== 0 || event.clientY !== 0)) {
-    dragState.value.x = event.clientX;
-    dragState.value.y = event.clientY;
-  }
-}
-
-function handleDragEnd() {
-  dragState.value = null;
-}
-
-function handleDrop(row: number, col: number) {
-  dragState.value = null;
-  if (selectedSquare.value) {
-    const actions = getLegalMoves(
-      selectedSquare.value.row,
-      selectedSquare.value.col,
-      row,
-      col,
-    );
-    if (actions.length > 0) {
-      if (actions.length === 1 && actions[0] % 5 === 0) {
-        makeMove(actions[0]);
-        selectedSquare.value = null;
-      } else {
-        promotionDialog.value = { actions, row, col };
-      }
+      selectedSquare.value = null;
     }
   }
 }
@@ -659,9 +777,13 @@ async function makeMove(action: number) {
     const data = await res.json();
     if (data.status !== 'ok') {
       alert(data.message);
+      // Our optimistic drag update may have gotten ahead of the server;
+      // re-fetch the authoritative state to correct any drift.
+      fetchStatus();
     }
   } catch (e) {
     console.error(e);
+    fetchStatus();
   }
 }
 </script>
@@ -743,85 +865,9 @@ async function makeMove(action: number) {
 
     <section v-else-if="currentMode === 'game'" class="card chess-card">
       <div class="status-msg" v-if="statusMsg">{{ statusMsg }}</div>
-      <div class="chess-board">
-        <template v-for="(row, rIndex) in displayBoard" :key="rIndex">
-          <div
-            v-for="(cell, cIndex) in row"
-            :key="cIndex"
-            class="chess-square"
-            :class="[
-              (rIndex + cIndex) % 2 === 0 ? 'light' : 'dark',
-              {
-                selected:
-                  selectedSquare?.row ===
-                    (isBoardFlipped ? 7 - rIndex : rIndex) &&
-                  selectedSquare?.col ===
-                    (isBoardFlipped ? 7 - cIndex : cIndex),
-                'last-move':
-                  (lastAction?.from.row ===
-                    (isBoardFlipped ? 7 - rIndex : rIndex) &&
-                    lastAction?.from.col ===
-                      (isBoardFlipped ? 7 - cIndex : cIndex)) ||
-                  (lastAction?.to.row ===
-                    (isBoardFlipped ? 7 - rIndex : rIndex) &&
-                    lastAction?.to.col ===
-                      (isBoardFlipped ? 7 - cIndex : cIndex)),
-              },
-            ]"
-            @click="
-              handleSquareClick(
-                isBoardFlipped ? 7 - rIndex : rIndex,
-                isBoardFlipped ? 7 - cIndex : cIndex,
-              )
-            "
-            @dragover.prevent
-            @drop="
-              handleDrop(
-                isBoardFlipped ? 7 - rIndex : rIndex,
-                isBoardFlipped ? 7 - cIndex : cIndex,
-              )
-            "
-          >
-            <div
-              v-if="cell !== ' '"
-              class="piece-wrapper"
-              :style="{ backgroundImage: `url(${getPieceImage(cell)})` }"
-              draggable="true"
-              @dragstart="
-                handleDragStart(
-                  isBoardFlipped ? 7 - rIndex : rIndex,
-                  isBoardFlipped ? 7 - cIndex : cIndex,
-                  $event,
-                )
-              "
-              @drag="handleDrag"
-              @dragend="handleDragEnd"
-            ></div>
-            <!-- Coordinates -->
-            <span v-if="cIndex === 0" class="coord-rank">{{
-              ranks[isBoardFlipped ? 7 - rIndex : rIndex]
-            }}</span>
-            <span v-if="rIndex === 7" class="coord-file">{{
-              files[isBoardFlipped ? 7 - cIndex : cIndex]
-            }}</span>
-          </div>
-        </template>
+      <div class="chess-board-wrap">
+        <div ref="boardContainer" class="chess-board"></div>
       </div>
-
-      <!-- Custom floating drag ghost -->
-      <teleport to="body">
-        <div
-          v-if="dragState"
-          class="custom-drag-ghost"
-          :style="{
-            width: dragState.width + 'px',
-            height: dragState.height + 'px',
-            left: dragState.x + dragState.tweakX + 'px',
-            top: dragState.y + dragState.tweakY + 'px',
-            backgroundImage: `url(${dragState.piece})`,
-          }"
-        ></div>
-      </teleport>
 
       <!-- Promotion Modal -->
       <div v-if="promotionDialog" class="modal-overlay">
@@ -1121,90 +1167,41 @@ select {
   margin-bottom: 1rem;
 }
 
+.chess-board-wrap {
+  display: flex;
+  justify-content: center;
+}
+
 .chess-board {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  grid-template-rows: repeat(8, 1fr);
   width: min(80vw, 600px);
-  height: min(80vw, 600px);
-  border: 8px solid #334155;
-  border-radius: 4px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
   user-select: none;
 }
 
-.chess-square {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  font-size: 3rem;
-  font-weight: bold;
+/*
+ * chessboard.js builds the board's square/piece DOM itself (via jQuery),
+ * so those elements never receive this component's scoped `data-v-*`
+ * attribute. `:deep()` is required for any rule that needs to reach them.
+ */
+:deep(.board-b72b1) {
+  border: 8px solid #334155;
+  border-radius: 4px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+:deep(.square-55d63) {
   cursor: pointer;
 }
 
-.chess-square.selected {
+:deep(.legal-move-highlight) {
+  box-shadow: inset 0 0 0 4px rgba(59, 130, 246, 0.55);
+}
+
+:deep(.selected-square-highlight) {
   background-color: rgba(255, 255, 0, 0.4) !important;
 }
 
-.chess-square.last-move {
+:deep(.last-move-highlight) {
   background-color: rgba(155, 199, 0, 0.41) !important;
-}
-
-.chess-square.light {
-  background-color: #f0d9b5;
-  color: #b58863;
-}
-
-.chess-square.dark {
-  background-color: #b58863;
-  color: #f0d9b5;
-}
-
-.piece-wrapper {
-  width: 100%;
-  height: 100%;
-  cursor: grab;
-  background-size: 90%;
-  background-repeat: no-repeat;
-  background-position: center;
-}
-
-.piece-wrapper:active {
-  cursor: grabbing;
-}
-
-.custom-drag-ghost {
-  position: fixed;
-  background-size: 90%;
-  background-repeat: no-repeat;
-  background-position: center;
-  pointer-events: none;
-  z-index: 9999;
-  /* Centered perfectly on the mouse pointer */
-  transform: translate(-50%, -50%);
-}
-
-.coord-rank {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-.coord-file {
-  position: absolute;
-  bottom: 4px;
-  right: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.6;
-  pointer-events: none;
 }
 
 .modal-overlay {

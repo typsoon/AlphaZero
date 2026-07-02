@@ -14,3 +14,9 @@ target_link_libraries(benchmark_policy PRIVATE spdlog::spdlog
                                                "${TORCH_LIBRARIES}")
 target_include_directories(benchmark_policy
                            PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+add_executable(cudagraphs_repro EXCLUDE_FROM_ALL cudagraphs_repro.cpp)
+target_link_libraries(cudagraphs_repro PRIVATE inference spdlog::spdlog
+                                               "${TORCH_LIBRARIES}")
+target_include_directories(cudagraphs_repro
+                           PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)

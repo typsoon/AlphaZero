@@ -1,5 +1,6 @@
 import shutil
 import sys
+from pathlib import Path
 from python.checkpoint_manager import CheckpointManager
 from python.utils import PROJ_ROOT, BUILD_DIR
 from doit_systemd import *  # noqa: F403
@@ -411,6 +412,7 @@ def task_check_all():
             "lint:ts",
             "lint:cpp",
             "validate_connect4_puzzles",
+            "validate_chess_puzzles",
             "test_cpp",
             "test_python",
             "test_train_loss",
@@ -428,13 +430,27 @@ def task_validate_connect4_puzzles():
     }
 
 
+def task_validate_chess_puzzles():
+    """Validate the Chess puzzle JSON files."""
+    return {
+        "actions": [
+            with_report(
+                f"{sys.executable} -m performance_evaluation.validate_chess_puzzles"
+            )
+        ]
+    }
+
+
 def task_test_performance():
     """Run performance evaluation and generate the HTML report."""
     inference_bin = BUILD_DIR / "inference_server" / "inference_server"
 
-    def run_evaluator(network_path, mcts_search_depth):
-        network_path = resolve_network_path(network_path, "connect4")
-        cmd = f"{sys.executable} -m performance_evaluation.evaluator --network-path {network_path} --inference-binary {inference_bin}"
+    def run_evaluator(network_path, mcts_search_depth, game):
+        network_path = resolve_network_path(network_path, game)
+        cmd = (
+            f"{sys.executable} -m performance_evaluation.evaluator "
+            f"--network-path {network_path} --inference-binary {inference_bin} --game {game}"
+        )
         if mcts_search_depth is not None:
             cmd += f" --mcts-search-depth {mcts_search_depth}"
         return run_protected(cmd)
@@ -453,6 +469,14 @@ def task_test_performance():
                 "default": None,
                 "help": "MCTS search depth (optional)",
             },
+            {
+                "name": "game",
+                "long": "game",
+                "type": str,
+                "default": "connect4",
+                "help": "The game to run puzzle evaluation for",
+                "choices": SUPPORTED_GAMES,
+            },
         ],
         "task_dep": ["build"],
     }
@@ -462,6 +486,18 @@ def task_run_client():
     """Run the gameplay client in dev mode."""
     client_dir = PROJ_ROOT / "gameplay_client"
     return {"actions": [f"cd {client_dir} && npm install && npm run dev"]}
+
+
+def task_open_chess_puzzle_editor():
+    """Open the standalone chess puzzle editor (chessboard.js) in a browser."""
+
+    def open_editor():
+        import webbrowser
+
+        editor_path = PROJ_ROOT / "performance_evaluation" / "puzzle_editor.html"
+        webbrowser.open(editor_path.as_uri())
+
+    return {"actions": [open_editor]}
 
 
 def task_run_game_server():
@@ -556,6 +592,20 @@ def _get_profile_params(default_num_games: int, default_thread_count: int) -> li
             "default": 512,
             "help": "Maximum number of moves per game before forcing a draw",
         },
+        {
+            "name": "mcts_num_simulations",
+            "long": "mcts_num_simulations",
+            "type": int,
+            "default": 800,
+            "help": "Number of MCTS simulations per move",
+        },
+        {
+            "name": "mcts_batch_size",
+            "long": "mcts_batch_size",
+            "type": int,
+            "default": 32,
+            "help": "Batch size used within MCTS::search for leaf evaluation",
+        },
     ]
 
 
@@ -563,9 +613,16 @@ def task_profile_self_play_cachegrind():
     """Run a profiler on the self_play execution using cachegrind."""
     profiling_bin = BUILD_DIR / "engine" / "profiling" / "run_self_play"
 
-    def run_cachegrind(game, network_path, num_games, thread_count, max_moves):
+    def run_cachegrind(game, network_path, num_games, thread_count, max_moves,
+                       mcts_num_simulations, mcts_batch_size):
         network_path = resolve_network_path(network_path, game)
-        cmd = f"valgrind --tool=cachegrind --cachegrind-out-file=cachegrind.out {profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves}"
+        # Empty "" is the kineto_out placeholder (skips kineto profiling) so the
+        # positional mcts_num_simulations/mcts_batch_size args can still be reached.
+        cmd = (
+            f"valgrind --tool=cachegrind --cachegrind-out-file=cachegrind.out {profiling_bin} "
+            f'{game} {network_path} {num_games} {thread_count} {max_moves} "" '
+            f"{mcts_num_simulations} {mcts_batch_size}"
+        )
         return run_protected(cmd)
 
     return {
@@ -579,13 +636,38 @@ def task_profile_self_play_cachegrind():
     }
 
 
+def _perf_cycles_event():
+    """Pick the perf event(s) needed to see all CPU activity on this machine.
+
+    On Intel hybrid (P-core/E-core) CPUs, plain "cycles" resolves to a single PMU
+    and silently misses whatever ran on the other core type. Non-hybrid machines
+    (AMD, older Intel, most CI/cloud boxes) don't have cpu_core/cpu_atom PMUs at
+    all, and requesting them makes perf record fail outright. Detect which case
+    we're in via the PMUs registered in sysfs rather than hardcoding either.
+    """
+    pmu_dir = Path("/sys/bus/event_source/devices")
+    if (pmu_dir / "cpu_core").exists() and (pmu_dir / "cpu_atom").exists():
+        return "cpu_core/cycles/,cpu_atom/cycles/"
+    return "cycles"
+
+
 def task_profile_self_play_perf():
     """Run a multithreaded profiler on the self_play execution using Linux perf."""
     profiling_bin = BUILD_DIR / "engine" / "profiling" / "run_self_play"
 
-    def run_perf(game, network_path, num_games, thread_count, max_moves):
+    def run_perf(game, network_path, num_games, thread_count, max_moves,
+                mcts_num_simulations, mcts_batch_size):
         network_path = resolve_network_path(network_path, game)
-        cmd = f"perf record -g -o perf.data {profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves}"
+        # --call-graph dwarf is used instead of -g (frame-pointer) because
+        # libtorch's optimized kernels are often built without frame pointers,
+        # which otherwise breaks call-graph attribution.
+        # Empty "" is the kineto_out placeholder (skips kineto profiling) so the
+        # positional mcts_num_simulations/mcts_batch_size args can still be reached.
+        cmd = (
+            f"perf record -e {_perf_cycles_event()} --call-graph dwarf "
+            f'-o perf.data {profiling_bin} {game} {network_path} {num_games} {thread_count} '
+            f'{max_moves} "" {mcts_num_simulations} {mcts_batch_size}'
+        )
         return run_protected(cmd)
 
     return {
@@ -603,10 +685,14 @@ def task_profile_self_play_kineto():
     """Run a profiler on the self_play execution using PyTorch Kineto."""
     profiling_bin = BUILD_DIR / "engine" / "profiling" / "run_self_play"
 
-    def run_kineto(game, network_path, num_games, thread_count, max_moves):
+    def run_kineto(game, network_path, num_games, thread_count, max_moves,
+                  mcts_num_simulations, mcts_batch_size):
         network_path = resolve_network_path(network_path, game)
         out_file = "pytorch_profile.json"
-        cmd = f"{profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves} {out_file}"
+        cmd = (
+            f"{profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves} "
+            f"{out_file} {mcts_num_simulations} {mcts_batch_size}"
+        )
         return run_protected(cmd)
 
     return {
@@ -620,11 +706,46 @@ def task_profile_self_play_kineto():
     }
 
 
+def task_profile_self_play_nsys():
+    """Run a profiler on the self_play execution using Nsight Systems (nsys)."""
+    profiling_bin = BUILD_DIR / "engine" / "profiling" / "run_self_play"
+
+    def run_nsys(game, network_path, num_games, thread_count, max_moves,
+                mcts_num_simulations, mcts_batch_size):
+        network_path = resolve_network_path(network_path, game)
+        # --cudabacktrace=memory:1000000 captures a CPU backtrace for any CUDA memory
+        # API call (memcpy/memset) that takes over 1ms, so slow calls can be traced
+        # back to the exact source line that issued them - the plain CUDA API name
+        # alone (e.g. cudaMemcpyAsync) doesn't say which of many call sites it was.
+        # Empty "" is the kineto_out placeholder (skips kineto profiling) so the
+        # positional mcts_num_simulations/mcts_batch_size args can still be reached.
+        cmd = (
+            "nsys profile --cudabacktrace=memory:1000000 --force-overwrite=true "
+            f'-o nsys_capture {profiling_bin} {game} {network_path} {num_games} {thread_count} '
+            f'{max_moves} "" {mcts_num_simulations} {mcts_batch_size}'
+        )
+        return run_protected(cmd)
+
+    return {
+        "actions": [
+            f"cmake --build {BUILD_DIR} --target run_self_play -j$(nproc)",
+            run_nsys,
+            "echo '\\033[32mProfile saved to nsys_capture.nsys-rep. Run `nsys stats nsys_capture.nsys-rep` or open it in the Nsight Systems UI to view it.\\033[0m'",
+        ],
+        "params": _get_profile_params(default_num_games=2, default_thread_count=1),
+        "task_dep": ["setup_vcpkg"],
+    }
+
+
 def task_generate_tensorrt_models():
     """Iterate through available checkpoints and generate TensorRT scripted models."""
 
     def run_generate(max_first_dim):
-        cmd = f"{sys.executable} -m python.tools.generate_tensorrt_models --max_first_dim {max_first_dim}"
+        cmd = f"{sys.executable} -m python.tools.generate_tensorrt_models"
+        # Only forward an explicit override - leaving it unset lets
+        # AlphaZeroNetwork.tensorrt_and_save_network use its own default.
+        if max_first_dim is not None:
+            cmd += f" --max_first_dim {max_first_dim}"
         return run_protected(cmd)
 
     return {
@@ -634,8 +755,9 @@ def task_generate_tensorrt_models():
                 "name": "max_first_dim",
                 "long": "max_first_dim",
                 "type": int,
-                "default": 8192,
-                "help": "Max first dim of input (max TensorRT batch size)",
+                "default": None,
+                "help": "Max first dim of input (max TensorRT batch size). Defaults to "
+                "AlphaZeroNetwork.tensorrt_and_save_network's own default if not set.",
             }
         ],
         "verbosity": 2,

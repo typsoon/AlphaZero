@@ -9,6 +9,7 @@
 #include <c10/core/Device.h>
 #include <c10/core/DeviceType.h>
 #include <memory>
+#include <omp.h>
 #include <random>
 #include <spdlog/spdlog.h>
 #include <string>
@@ -20,9 +21,8 @@ static torch::Tensor vector_to_tensor(std::vector<float> &data) {
     return torch::from_blob(data.data(), {static_cast<long>(data.size())}, torch::kFloat);
 }
 
-static void play_game(std::shared_ptr<Game> game, std::unique_ptr<MCTS> mcts,
-                      ReplayBuffer &replay_buffer, int mcts_num_simulations, int mcts_batch_size,
-                      int max_moves) {
+static void play_game(std::shared_ptr<Game> game, MCTS &mcts, ReplayBuffer &replay_buffer,
+                      int mcts_num_simulations, int mcts_batch_size, int max_moves) {
     game->reset();
     std::vector<Transition> trajectory;
 
@@ -31,7 +31,7 @@ static void play_game(std::shared_ptr<Game> game, std::unique_ptr<MCTS> mcts,
         torch::Tensor game_state_tensor = torch::empty(shape, torch::kFloat32);
         game->write_canonical_state(game_state_tensor.data_ptr<float>());
         game_state_tensor = game_state_tensor.unsqueeze(0);
-        auto [policy, root_value] = mcts->search(*game, mcts_num_simulations, mcts_batch_size);
+        auto [policy, root_value] = mcts.search(*game, mcts_num_simulations, mcts_batch_size);
 
         // Temperature scaling: tau=1 for first 30 moves, tau->0 (argmax) afterwards
         int action = -1;
@@ -72,10 +72,23 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
 
     std::atomic<int> games_finished{0};
 
+    // One MCTS (and its arena) per OpenMP thread, reused across every game that
+    // thread picks up, instead of a fresh one per game. MCTS::search() already
+    // calls pool.release() as its first line on every call - move 1 of a new game
+    // resets the arena exactly the same way move 2 of an ongoing game does - so
+    // reusing the same MCTS across games is already safe by construction; this only
+    // avoids repeating the ~256MB allocation + first-touch page-fault cost once per
+    // game instead of once per thread.
+    std::vector<std::unique_ptr<MCTS>> thread_mcts;
+    thread_mcts.reserve(thread_count);
+    for (int t = 0; t < thread_count; t++) {
+        thread_mcts.push_back(mcts_factory.get_mcts());
+    }
+
 #pragma omp parallel for schedule(dynamic) num_threads(thread_count)
     for (int i = 0; i < num_games; i++) { // NOLINT
-        auto mcts = mcts_factory.get_mcts();
-        play_game(initial_game->clone(), std::move(mcts), replay_buffer, mcts_num_simulations,
+        auto &mcts = thread_mcts[omp_get_thread_num()];
+        play_game(initial_game->clone(), *mcts, replay_buffer, mcts_num_simulations,
                   mcts_batch_size, max_moves);
 
         auto current_finished = ++games_finished;

@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
 import json
-import glob
-import os
 import sys
+from pathlib import Path
 
 from .format_puzzles import format_json_string
 
 
 def main():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    pattern = os.path.join(base_dir, "games", "connect4", "*", "*.json")
-    files = glob.glob(pattern)
+    base_dir = Path(__file__).resolve().parent
+    files = (base_dir / "games").glob("*/*/*.json")
 
     all_correct = True
     for filepath in files:
-        with open(filepath, "r") as f:
-            original_content = f.read()
+        original_content = filepath.read_text()
 
         data = json.loads(original_content)
         json_str = json.dumps(data, indent=2)
