@@ -119,14 +119,24 @@ class Connect4 implements Game {
       throw new Error(`Invalid action ${this.finished} ${action}`);
     }
 
-    if (this.checkWin(placedRow, placedCol)) {
+    const won = this.checkWin(placedRow, placedCol); // must run before the flip
+    // below - checkDirection() reads board[r][c] === this.currentPlayer
+    const full = !won && this.get_legal_actions().length === 0;
+
+    // Always advance whose turn it conceptually is next, even at a terminal state -
+    // matching the C++ engine's Chess::step() (and, after this fix, Connect4::step()
+    // in engine/game/connect4.cpp), which always flips player regardless of outcome.
+    // get_current_player()/reward() are expressed from the perspective of whoever is
+    // "to move" next, so a winning move is -1 for the player now to move (they just
+    // lost), not +1 for the player who moved.
+    this.currentPlayer = -this.currentPlayer;
+
+    if (won) {
       this.finished = true;
-      this.rewardValue = 1.0;
-    } else if (this.get_legal_actions().length === 0) {
+      this.rewardValue = -1.0;
+    } else if (full) {
       this.finished = true;
       this.rewardValue = 0.0;
-    } else {
-      this.currentPlayer = -this.currentPlayer;
     }
   }
 

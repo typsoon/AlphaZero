@@ -71,11 +71,16 @@ describe('Connect4', () => {
     game.step(6);
     game.step(2);
     game.step(6);
-    game.step(3);
+    game.step(3); // player 1 completes four in a row
 
     expect(game.is_terminal()).toBe(true);
-    expect(game.get_current_player()).toBe(1);
-    expect(game.reward()).toBe(1.0);
+    // currentPlayer/reward() always advance to "whoever is to move next", even at a
+    // terminal state - matching Chess (see engine/game/chess.cpp) and the standard
+    // AlphaZero convention of expressing value from the perspective of the player to
+    // move. A win is therefore -1 for the player now to move (player -1, who just
+    // lost), not +1 for the player who moved.
+    expect(game.get_current_player()).toBe(-1);
+    expect(game.reward()).toBe(-1.0);
   });
 
   test('accepts initial board and preserves internal format', () => {

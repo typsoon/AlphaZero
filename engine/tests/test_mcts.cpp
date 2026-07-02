@@ -2,6 +2,7 @@
 #include "CppUTest/MemoryLeakWarningPlugin.h"
 #include "CppUTest/TestHarness.h"
 #include "game/chess.hpp"
+#include "game/connect4.hpp"
 #include "mcts.hpp"
 #include <algorithm>
 #include <memory>
@@ -191,6 +192,134 @@ TEST(MCTSTests, VisitsSpreadAcrossMovesWhenNoTacticsExist) {
 
     CHECK_TRUE(nonzero_count > 10);
     CHECK_TRUE(max_pi < 0.5f);
+}
+
+TEST_GROUP(MCTSConnect4Tests){};
+
+// Player 1 (X) has three in a row at the bottom of columns 0-2; column 3 completes
+// it. Column 6 has three stacked O's (not four - no win) just so the piece counts
+// stay equal and it's still player 1's turn (Connect4's constructor infers whose turn
+// it is from how many of each piece are on the board).
+//
+// This is the Connect4 analogue of ForcedMateGetsMostVisitsUnderUniformPrior above,
+// and it matters for a specific reason: Connect4::step() only flips currentPlayer in
+// its "game continues" branch - a winning move leaves currentPlayer pointing at the
+// player who just won, whereas Chess::step() always flips player, win or not. Since
+// MCTS's terminal backprop is written generically against Game::reward()/
+// get_current_player(), that asymmetry between the two games' conventions is exactly
+// the kind of thing that could make a fix that's correct for Chess silently wrong for
+// Connect4 - so this checks it actually holds up here too, rather than assuming it.
+TEST(MCTSConnect4Tests, ForcedWinGetsMostVisitsUnderUniformPrior) {
+    Connect4::board_t b{};
+    for (auto &row : b)
+        row.fill(0);
+    b[5][0] = 1;
+    b[5][1] = 1;
+    b[5][2] = 1; // three X's in a row at the bottom; column 3 wins
+    b[5][6] = -1;
+    b[4][6] = -1;
+    b[3][6] = -1; // three stacked O's, just to balance piece counts
+
+    Connect4 game(b);
+    CHECK_EQUAL(1, game.get_current_player()); // sanity: X to move
+
+    int win_action = 3;
+
+    MCTS mcts(std::make_unique<UniformInferer>());
+    auto [pi, root_value] = mcts.search(game, /*num_simulations=*/400, /*batch_size=*/1);
+    (void)root_value;
+
+    int argmax =
+        static_cast<int>(std::distance(pi.begin(), std::max_element(pi.begin(), pi.end())));
+
+    CHECK_EQUAL(win_action, argmax);
+    CHECK_TRUE(pi[win_action] > 0.5f);
+}
+
+// Mirror image of the test above, with player -1 (O) to move instead of player 1
+// (X). The always-flip fix in Connect4::step() negates currentPlayer symmetrically
+// (`currentPlayer = -currentPlayer`), so on paper it should behave identically for
+// either sign - but that's exactly the kind of assumption worth checking rather than
+// trusting, especially right after fixing a sign bug in this same code path. Only
+// testing X's win (as the other test does) would leave O's side of the board
+// completely unverified.
+TEST(MCTSConnect4Tests, ForcedWinForPlayerTwoGetsMostVisitsUnderUniformPrior) {
+    Connect4::board_t b{};
+    for (auto &row : b)
+        row.fill(0);
+    b[5][0] = -1;
+    b[5][1] = -1;
+    b[5][2] = -1; // three O's in a row at the bottom; column 3 wins
+    b[5][6] = 1;
+    b[4][6] = 1; // two stacked X's, just to unbalance piece counts so it's O's turn
+
+    Connect4 game(b);
+    CHECK_EQUAL(-1, game.get_current_player()); // sanity: O to move
+
+    int win_action = 3;
+
+    MCTS mcts(std::make_unique<UniformInferer>());
+    auto [pi, root_value] = mcts.search(game, /*num_simulations=*/400, /*batch_size=*/1);
+    (void)root_value;
+
+    int argmax =
+        static_cast<int>(std::distance(pi.begin(), std::max_element(pi.begin(), pi.end())));
+
+    CHECK_EQUAL(win_action, argmax);
+    CHECK_TRUE(pi[win_action] > 0.5f);
+}
+
+TEST_GROUP(SelfPlayRewardAssignmentTests){};
+
+// Mirrors training/self_play.cpp's play_game()'s trajectory-reward assignment
+// exactly (see the loop at the bottom of play_game): game->reward() is expressed
+// from the perspective of whoever is "to move" at the now-terminal state, which is
+// the *other* player from whoever made trajectory's last recorded move (a decisive
+// game always ends with the player-to-move unable to move: mated, or facing a full
+// board they can't win from) - so it needs one flip before starting the backward
+// per-ply alternation.
+static std::vector<float> assign_trajectory_rewards(const std::vector<int> &movers_per_ply,
+                                                     float terminal_reward) {
+    std::vector<float> rewards(movers_per_ply.size());
+    float value = -terminal_reward;
+    for (int i = static_cast<int>(movers_per_ply.size()) - 1; i >= 0; --i) {
+        rewards[i] = value;
+        value = -value;
+    }
+    return rewards;
+}
+
+// Fool's Mate: White plays f3 and g4, Black replies e5 and then Qh4#. Black wins.
+// This exact position/move sequence is already covered by ChessTests::Checkmate
+// (which asserts game.reward() == -1.0f afterward), so this test isn't guessing at
+// what reward() returns - it reuses that already-verified fact and checks what
+// self_play.cpp's own alternation loop actually does with it.
+//
+// The trajectory records one entry per ply, in mover order: [White/f3, Black/e5,
+// White/g4, Black/Qh4#]. Black's own last entry (playing the winning move) must end
+// up with reward +1 - they won the game. If it doesn't, the network is being trained
+// on a value target that says "the move that just won the game was bad for the
+// player who made it", which is backwards.
+TEST(SelfPlayRewardAssignmentTests, WinningMoversLastTrajectoryEntryGetsPositiveReward) {
+    Chess game;
+    game.reset();
+    game.move_piece(6, 5, 5, 5); // 1. f3    (White, trajectory[0])
+    game.move_piece(1, 4, 3, 4); // 1... e5  (Black, trajectory[1])
+    game.move_piece(6, 6, 4, 6); // 2. g4    (White, trajectory[2])
+    game.move_piece(0, 3, 4, 7); // 2... Qh4# (Black, trajectory[3]) - Black wins
+
+    CHECK_TRUE(game.is_terminal());
+    CHECK_EQUAL(-1.0f, game.reward()); // sanity-check against ChessTests::Checkmate
+
+    // movers_per_ply is unused by assign_trajectory_rewards beyond its length, but
+    // spelling it out makes the mover/index correspondence explicit for readers.
+    std::vector<int> movers_per_ply = {/*White*/ 0, /*Black*/ 1, /*White*/ 0, /*Black*/ 1};
+    auto rewards = assign_trajectory_rewards(movers_per_ply, game.reward());
+
+    CHECK_TRUE(rewards[3] > 0.0f); // Black's own winning move
+    CHECK_TRUE(rewards[2] < 0.0f); // White's move right before losing
+    CHECK_TRUE(rewards[1] > 0.0f); // Black's earlier move, in the game Black wins
+    CHECK_TRUE(rewards[0] < 0.0f); // White's opening move, in the game White loses
 }
 
 int main(int ac, char **av) {

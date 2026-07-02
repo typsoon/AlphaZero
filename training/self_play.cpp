@@ -47,7 +47,15 @@ static void play_game(std::shared_ptr<Game> game, MCTS &mcts, ReplayBuffer &repl
         game->step(action);
     }
 
-    float value = game->reward();
+    // game->reward() is expressed from the perspective of whoever is "to move" at
+    // the now-terminal state (see Chess::reward()/Connect4::reward()) - i.e. the
+    // player who did NOT make the trajectory's last recorded move (a decisive game
+    // always ends with that player unable to move: mated, or facing a won board).
+    // trajectory.back() records the *other* player's own move - the one that just
+    // won (or, for a draw, ended) the game - so it needs one extra sign flip before
+    // starting the backward alternation, or the winner's own final move ends up
+    // credited as bad for them.
+    float value = -game->reward();
 
     for (int i = static_cast<int>(trajectory.size()) - 1; i >= 0; --i) {
         trajectory[i].reward = value;
