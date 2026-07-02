@@ -229,7 +229,11 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
             if (!node->terminal()) {
                 leaves.emplace_back(node, std::move(current_game));
             } else {
-                Node::backpropagate(node, -node->reward, true);
+                // node->reward() is already expressed in the same "value for the
+                // player to move at this node" convention that backpropagate expects
+                // (see evaluate_batch(), which passes res.value straight through) -
+                // it must not be re-negated here.
+                Node::backpropagate(node, node->reward, true);
             }
         }
 

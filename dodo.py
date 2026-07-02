@@ -389,8 +389,13 @@ def task_test_cpp():
     """Run C++ tests."""
     test_bin = BUILD_DIR / "inference_server" / "tests" / "inference_server_tests"
     test_chess = BUILD_DIR / "engine" / "test_chess"
+    test_mcts = BUILD_DIR / "engine" / "test_mcts"
     return {
-        "actions": [with_report(f"{test_bin}"), with_report(f"{test_chess}")],
+        "actions": [
+            with_report(f"{test_bin}"),
+            with_report(f"{test_chess}"),
+            with_report(f"{test_mcts}"),
+        ],
         "task_dep": ["build"],
     }
 
@@ -486,18 +491,6 @@ def task_run_client():
     """Run the gameplay client in dev mode."""
     client_dir = PROJ_ROOT / "gameplay_client"
     return {"actions": [f"cd {client_dir} && npm install && npm run dev"]}
-
-
-def task_open_chess_puzzle_editor():
-    """Open the standalone chess puzzle editor (chessboard.js) in a browser."""
-
-    def open_editor():
-        import webbrowser
-
-        editor_path = PROJ_ROOT / "performance_evaluation" / "puzzle_editor.html"
-        webbrowser.open(editor_path.as_uri())
-
-    return {"actions": [open_editor]}
 
 
 def task_run_game_server():

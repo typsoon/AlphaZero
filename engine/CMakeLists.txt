@@ -46,4 +46,9 @@ if(BUILD_TESTS)
   target_link_libraries(test_chess PRIVATE engine CppUTest "${TORCH_LIBRARIES}")
   target_compile_definitions(test_chess
                              PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
+
+  add_executable(test_mcts tests/test_mcts.cpp)
+  target_link_libraries(test_mcts PRIVATE engine CppUTest "${TORCH_LIBRARIES}")
+  target_compile_definitions(test_mcts
+                             PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
 endif()

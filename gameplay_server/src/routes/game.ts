@@ -31,6 +31,47 @@ function getGameInstance(dbGame: any) {
   }
 }
 
+/** Resolve an agent name (e.g. "AZNetwork_0") to a live inference socket path, or null. */
+async function resolveAgentSocket(
+  gameType: string,
+  agentName: string,
+): Promise<string | null> {
+  if (agentName.endsWith('.sock')) return agentName;
+
+  const baseDir = '/tmp';
+  try {
+    const files = await fs.readdir(baseDir);
+    const dirs = files.filter((f) => f.startsWith('alphazero-inference-'));
+    for (const dir of dirs) {
+      const networkDir = path.join(baseDir, dir, gameType, agentName);
+      try {
+        const sockets = await fs.readdir(networkDir);
+        const validSockets = sockets.filter((s) => s.endsWith('.sock'));
+        if (validSockets.length > 0) {
+          const socketsWithStats = await Promise.all(
+            validSockets.map(async (s) => {
+              const fullPath = path.join(networkDir, s);
+              try {
+                const stat = await fs.stat(fullPath);
+                return { path: fullPath, mtime: stat.mtime.getTime() };
+              } catch {
+                return { path: fullPath, mtime: 0 };
+              }
+            }),
+          );
+          socketsWithStats.sort((a, b) => b.mtime - a.mtime);
+          return socketsWithStats[0]!.path;
+        }
+      } catch {
+        /* ignore missing dir */
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 const subscriptions = new Map<string, Set<WebSocket>>();
 
 export function broadcastState(gameId: string, state: Record<string, unknown>) {
@@ -138,52 +179,12 @@ export default async function gameRoutes(server: FastifyInstance) {
     const currentAgent = isP1 ? dbGame.p1Agent : dbGame.p2Agent;
 
     if (currentType === 'ai' && currentAgent) {
-      let resolvedAgent = currentAgent;
-      if (!currentAgent.endsWith('.sock')) {
-        // Resolve network name (e.g. "AZNetwork_0") to a socket path.
-        const baseDir = '/tmp';
-        try {
-          const files = await fs.readdir(baseDir);
-          const dirs = files.filter((f) =>
-            f.startsWith('alphazero-inference-'),
-          );
-          for (const dir of dirs) {
-            const networkDir = path.join(
-              baseDir,
-              dir,
-              dbGame.gameType,
-              currentAgent,
-            );
-            try {
-              const sockets = await fs.readdir(networkDir);
-              const validSockets = sockets.filter((s) => s.endsWith('.sock'));
-              if (validSockets.length > 0) {
-                // Pick most recently modified socket (most likely to be alive)
-                const socketsWithStats = await Promise.all(
-                  validSockets.map(async (s) => {
-                    const fullPath = path.join(networkDir, s);
-                    try {
-                      const stat = await fs.stat(fullPath);
-                      return { path: fullPath, mtime: stat.mtime.getTime() };
-                    } catch {
-                      return { path: fullPath, mtime: 0 };
-                    }
-                  }),
-                );
-                socketsWithStats.sort((a, b) => b.mtime - a.mtime);
-                resolvedAgent = socketsWithStats[0]!.path;
-                server.log.info(
-                  `Resolved AI agent '${currentAgent}' to socket: ${resolvedAgent}`,
-                );
-                break;
-              }
-            } catch {
-              /* ignore missing dir */
-            }
-          }
-        } catch {
-          /* ignore */
-        }
+      const resolved = await resolveAgentSocket(dbGame.gameType, currentAgent);
+      const resolvedAgent = resolved ?? currentAgent;
+      if (resolved) {
+        server.log.info(
+          `Resolved AI agent '${currentAgent}' to socket: ${resolvedAgent}`,
+        );
       }
 
       if (!resolvedAgent.endsWith('.sock')) {
@@ -288,6 +289,50 @@ export default async function gameRoutes(server: FastifyInstance) {
       }
     }
   }
+
+  // Evaluate an arbitrary position (e.g. from the puzzle editor) without a live game.
+  server.post('/evaluate', async (req, reply) => {
+    const body = req.body as {
+      game_type?: string;
+      agent?: string;
+      fen?: string;
+      board?: number[][];
+    } | null;
+    const gameType = body?.game_type || 'chess';
+    const agentName = body?.agent;
+
+    if (!agentName) {
+      reply.code(400);
+      return { status: 'error', message: 'agent is required' };
+    }
+
+    const resolvedAgent = await resolveAgentSocket(gameType, agentName);
+    if (!resolvedAgent) {
+      reply.code(503);
+      return {
+        status: 'error',
+        message: `No active inference server found for agent '${agentName}'`,
+      };
+    }
+
+    try {
+      const aiGameState =
+        gameType === 'chess'
+          ? new ChessBoard(body?.fen).get_inference_state()
+          : toCppInferenceGameState((body?.board ?? []) as number[][]);
+
+      const agent = new AlphaZeroAgent(resolvedAgent);
+      const evaluation = await agent.evaluate(aiGameState);
+      return { status: 'ok', ...evaluation };
+    } catch (e: unknown) {
+      server.log.error(e);
+      reply.code(500);
+      return {
+        status: 'error',
+        message: (e as Error).message || 'Evaluation failed',
+      };
+    }
+  });
 
   server.post('/game/create', async (req) => {
     const body = req.body as {

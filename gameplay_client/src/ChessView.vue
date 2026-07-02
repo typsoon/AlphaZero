@@ -124,6 +124,146 @@ const editorStatusText = ref('Puzzle Editor — Ready');
 const editorStatusKind = ref<'info' | 'ok' | 'error'>('info');
 const editorFenInput = ref('');
 const editorExpectedInput = ref(''); // comma-separated uci moves
+const editorCategory = ref('mate_in_1');
+const editorPuzzleName = ref('puzzle_1_my_puzzle');
+
+// Piece char <-> the int encoding performance_evaluation/games/chess/*/*.json puzzles
+// use (see engine/game/chess.cpp's Piece enum): P=1,N=2,B=3,R=4,Q=5,K=6, negative for
+// black, matching Chess::encode_action's board convention (row 0 = rank 8).
+const PIECE_CHAR_TO_VALUE: Record<string, number> = {
+  P: 1,
+  N: 2,
+  B: 3,
+  R: 4,
+  Q: 5,
+  K: 6,
+};
+const PIECE_VALUE_TO_CHAR: Record<number, string> = {
+  1: 'P',
+  2: 'N',
+  3: 'B',
+  4: 'R',
+  5: 'Q',
+  6: 'K',
+};
+
+function editorBoardToPuzzleBoard(board: EditorBoard): number[][] {
+  return board.map((row) =>
+    row.map((cell) => {
+      if (cell === ' ') return 0;
+      const upper = cell.toUpperCase();
+      const value = PIECE_CHAR_TO_VALUE[upper] ?? 0;
+      return cell === upper ? value : -value;
+    }),
+  );
+}
+
+function puzzleBoardToEditorBoard(board: number[][]): EditorBoard {
+  return board.map((row) =>
+    row.map((cell) => {
+      if (cell === 0) return ' ';
+      const char = PIECE_VALUE_TO_CHAR[Math.abs(cell)] ?? ' ';
+      return cell > 0 ? char : char.toLowerCase();
+    }),
+  );
+}
+
+// Same encoding as Chess::encode_action: action = (from*64 + to)*5 + promotion,
+// from/to = row*8+col (row 0 = rank 8, col 0 = file a).
+function uciToAction(uci: string): number {
+  const from = squareToRowCol(uci.slice(0, 2));
+  const to = squareToRowCol(uci.slice(2, 4));
+  const promoChar = uci[4]?.toLowerCase();
+  const promo =
+    promoChar === 'q'
+      ? 1
+      : promoChar === 'r'
+        ? 2
+        : promoChar === 'n'
+          ? 3
+          : promoChar === 'b'
+            ? 4
+            : 0;
+  const fromIdx = from.row * 8 + from.col;
+  const toIdx = to.row * 8 + to.col;
+  return (fromIdx * 64 + toIdx) * 5 + promo;
+}
+
+// --- Editor: live model evaluation ---
+const editorAgent = ref<string>('');
+const editorEvaluating = ref(false);
+const editorEvalError = ref<string | null>(null);
+const editorEvalValue = ref<number | null>(null);
+const editorEvalMoves = ref<{ uci: string; prob: number }[]>([]);
+
+const PROMO_SUFFIX: Record<number, string> = {
+  0: '',
+  1: '=Q',
+  2: '=R',
+  3: '=N',
+  4: '=B',
+};
+
+function decodeActionToUci(action: number): string {
+  const promo = action % 5;
+  const rest = Math.floor(action / 5);
+  const to = rest % 64;
+  const from = Math.floor(rest / 64);
+  const fromSq = rowColToSquare(Math.floor(from / 8), from % 8);
+  const toSq = rowColToSquare(Math.floor(to / 8), to % 8);
+  return `${fromSq}${toSq}${PROMO_SUFFIX[promo]}`;
+}
+
+async function evaluateEditorPosition() {
+  if (!editorAgent.value) {
+    editorEvalError.value = 'No agent selected.';
+    return;
+  }
+  editorEvaluating.value = true;
+  editorEvalError.value = null;
+  editorEvalMoves.value = [];
+  editorEvalValue.value = null;
+  try {
+    updateFenFromBoard();
+    const res = await fetch(`${apiBase}/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        game_type: 'chess',
+        agent: editorAgent.value,
+        fen: editorFenInput.value,
+      }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') {
+      throw new Error(data.message || 'Evaluation failed');
+    }
+    editorEvalValue.value = data.value ?? 0;
+
+    const policy = data.policy as
+      | number[]
+      | { index: number; value: number }[];
+    let entries: { action: number; prob: number }[];
+    if (policy.length > 0 && typeof policy[0] === 'object') {
+      entries = (policy as { index: number; value: number }[]).map((e) => ({
+        action: e.index,
+        prob: e.value,
+      }));
+    } else {
+      entries = (policy as number[])
+        .map((prob, action) => ({ action, prob }))
+        .filter((e) => e.prob > 1e-6);
+    }
+    entries.sort((a, b) => b.prob - a.prob);
+    editorEvalMoves.value = entries
+      .slice(0, 8)
+      .map((e) => ({ uci: decodeActionToUci(e.action), prob: e.prob }));
+  } catch (e: any) {
+    editorEvalError.value = e.message || String(e);
+  } finally {
+    editorEvaluating.value = false;
+  }
+}
 
 // Editor drag-and-drop
 const editorDragPiece = ref<string | null>(null); // piece being dragged
@@ -312,24 +452,49 @@ function loadFen() {
 
 function downloadChessPuzzle() {
   updateFenFromBoard();
-  const fen = boardToFen();
-  const expected = editorExpectedInput.value
+  const expectedUcis = editorExpectedInput.value
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  const data = JSON.stringify(
-    { fen, side_to_move: editorSideToMove.value, expected_moves: expected },
-    null,
-    2,
+  const warnings: string[] = [];
+  const kingCounts = { w: 0, b: 0 };
+  editorBoard.value.forEach((row) =>
+    row.forEach((cell) => {
+      if (cell === 'K') kingCounts.w++;
+      if (cell === 'k') kingCounts.b++;
+    }),
   );
+  if (kingCounts.w !== 1) warnings.push(`expected 1 white king, found ${kingCounts.w}`);
+  if (kingCounts.b !== 1) warnings.push(`expected 1 black king, found ${kingCounts.b}`);
+  if (expectedUcis.length === 0) warnings.push('no expected moves added');
+
+  // Matches performance_evaluation/games/chess/*/*.json: en_passant/castling are
+  // always exported as disabled, since the engine's set_custom_state always resets
+  // move_count/en_passant_move to 0, so en passant can never actually be legal for a
+  // puzzle loaded this way - see validate_chess_puzzles.py's module docstring.
+  const puzzle = {
+    board: editorBoardToPuzzleBoard(editorBoard.value),
+    player: editorSideToMove.value === 'b' ? 1 : 0,
+    en_passant: -1,
+    castling: [1, 1, 1, 1, 1, 1],
+    expected_moves: [...new Set(expectedUcis.map(uciToAction))].sort((a, b) => a - b),
+  };
+
+  const data = JSON.stringify(puzzle, null, 2) + '\n';
   const blob = new Blob([data], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'chess_puzzle.json';
+  const name = editorPuzzleName.value.trim() || 'puzzle';
+  a.download = `${name}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  setEditorStatus('Puzzle saved!', 'ok');
+  setEditorStatus(
+    warnings.length
+      ? `Puzzle saved with warnings: ${warnings.join('; ')}`
+      : `Puzzle saved! Move it into performance_evaluation/games/chess/${editorCategory.value || '<category>'}/`,
+    warnings.length ? 'error' : 'ok',
+  );
 }
 
 function handleChessPuzzleUpload(e: Event) {
@@ -340,13 +505,16 @@ function handleChessPuzzleUpload(e: Event) {
   reader.onload = (ev) => {
     try {
       const json = JSON.parse(ev.target?.result as string);
-      const parsed = parseFenToBoard(json.fen);
-      if (!parsed) throw new Error('Invalid FEN in file');
+      if (!Array.isArray(json.board)) {
+        throw new Error('Missing "board" field - not a valid puzzle JSON');
+      }
       saveEditorHistory();
-      editorBoard.value = parsed;
-      editorFenInput.value = json.fen || '';
-      editorSideToMove.value = json.side_to_move === 'b' ? 'b' : 'w';
-      editorExpectedInput.value = (json.expected_moves || []).join(', ');
+      editorBoard.value = puzzleBoardToEditorBoard(json.board);
+      editorSideToMove.value = json.player === 1 ? 'b' : 'w';
+      updateFenFromBoard();
+      editorExpectedInput.value = ((json.expected_moves || []) as number[])
+        .map(decodeActionToUci)
+        .join(', ');
       setEditorStatus('Puzzle loaded successfully', 'ok');
     } catch (err: any) {
       setEditorStatus(`Failed to load: ${err.message}`, 'error');
@@ -575,6 +743,7 @@ async function fetchAgents() {
       availableAgents.value = data.agents;
       if (availableAgents.value.length > 0) {
         p2Agent.value = availableAgents.value[0];
+        editorAgent.value = availableAgents.value[0];
       }
     }
   } catch (e) {
@@ -965,6 +1134,18 @@ async function makeMove(action: number) {
         <!-- File -->
         <div class="tool-group">
           <strong>File:</strong>
+          <input
+            v-model="editorCategory"
+            class="fen-input"
+            style="width: 140px; flex: none"
+            placeholder="category, e.g. mate_in_1"
+          />
+          <input
+            v-model="editorPuzzleName"
+            class="fen-input"
+            style="width: 180px; flex: none"
+            placeholder="puzzle_1_my_puzzle"
+          />
           <button class="btn primary" @click="downloadChessPuzzle">
             Save JSON
           </button>
@@ -985,6 +1166,23 @@ async function makeMove(action: number) {
               style="display: none"
             />
           </label>
+        </div>
+
+        <!-- Evaluation -->
+        <div class="tool-group">
+          <strong>Evaluate:</strong>
+          <select v-model="editorAgent">
+            <option v-for="a in availableAgents" :key="a" :value="a">
+              {{ a }}
+            </option>
+          </select>
+          <button
+            class="btn"
+            @click="evaluateEditorPosition"
+            :disabled="editorEvaluating || !editorAgent"
+          >
+            {{ editorEvaluating ? 'Evaluating…' : 'Evaluate Position' }}
+          </button>
         </div>
       </div>
 
@@ -1020,6 +1218,41 @@ async function makeMove(action: number) {
           class="fen-input"
           placeholder="e.g. e2e4, d7d5"
         />
+      </div>
+
+      <!-- Evaluation results -->
+      <div v-if="editorEvalError || editorEvalValue !== null" class="eval-panel">
+        <div v-if="editorEvalError" class="eval-error">
+          ⚠ {{ editorEvalError }}
+        </div>
+        <template v-else>
+          <div
+            class="eval-value-line"
+            :class="{
+              pos: (editorEvalValue ?? 0) > 0,
+              neg: (editorEvalValue ?? 0) < 0,
+            }"
+          >
+            Value: {{ editorEvalValue!.toFixed(4) }} (mover's perspective)
+          </div>
+          <ol class="eval-move-list">
+            <li v-for="m in editorEvalMoves" :key="m.uci">
+              <span class="eval-move-uci">{{ m.uci }}</span>
+              <span class="eval-bar-wrap"
+                ><span
+                  class="eval-bar"
+                  :style="{
+                    width:
+                      (editorEvalMoves[0]
+                        ? (m.prob / editorEvalMoves[0].prob) * 100
+                        : 0) + '%',
+                  }"
+                ></span
+              ></span>
+              <span class="eval-move-pct">{{ (m.prob * 100).toFixed(1) }}%</span>
+            </li>
+          </ol>
+        </template>
       </div>
 
       <!-- Board -->
@@ -1444,5 +1677,75 @@ select {
 }
 .status.info {
   color: #64748b;
+}
+
+.eval-panel {
+  width: 100%;
+  max-width: 700px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+}
+
+.eval-error {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.eval-value-line {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  color: #1e293b;
+}
+
+.eval-value-line.pos {
+  color: #16a34a;
+}
+
+.eval-value-line.neg {
+  color: #dc2626;
+}
+
+.eval-move-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.eval-move-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.eval-move-uci {
+  width: 60px;
+  flex-shrink: 0;
+}
+
+.eval-bar-wrap {
+  display: block;
+  flex: 1;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.eval-bar {
+  display: block;
+  height: 100%;
+  background: #3b82f6;
+}
+
+.eval-move-pct {
+  width: 48px;
+  text-align: right;
+  flex-shrink: 0;
 }
 </style>

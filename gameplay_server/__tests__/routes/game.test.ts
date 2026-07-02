@@ -102,6 +102,49 @@ describe('Game Routes Integration', () => {
       expect(body.message).toMatch(/ENOENT|Move failed/);
     }
   });
+  describe('AI vs human player ID assignment', () => {
+    test('POST /game/create assigns a real p2_id when p1 is AI and p2 is human', async () => {
+      // Regression test: p2_id used to be derived from p1_id (`p2Id = p2Type ===
+      // 'human' ? p1Id : null`), so when p1 was AI (p1Id === null) but p2 was
+      // human, p2 silently got null too - the human Player 2/Yellow could never
+      // get a valid session id to make moves with.
+      const response = await app.inject({
+        method: 'POST',
+        url: '/game/create',
+        payload: {
+          p1_type: 'ai',
+          p2_type: 'human',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.status).toBe('ok');
+      expect(body.p1_id).toBeNull();
+      expect(body.p2_id).toBeDefined();
+      expect(body.p2_id).not.toBeNull();
+      expect(typeof body.p2_id).toBe('string');
+      expect(body.p2_id.length).toBeGreaterThan(0);
+    });
+
+    test('POST /game/create still shares one id between two human players', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/game/create',
+        payload: {
+          p1_type: 'human',
+          p2_type: 'human',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.payload);
+      expect(body.status).toBe('ok');
+      expect(body.p1_id).toBeDefined();
+      expect(body.p2_id).toBe(body.p1_id);
+    });
+  });
+
   describe('Chess Game Tests', () => {
     let chessGameId = '';
     let chessPlayerId = '';

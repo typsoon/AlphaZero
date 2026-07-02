@@ -3,8 +3,9 @@
 Uses python-chess (pure-Python chess rules engine) as an independent authority to check
 that each puzzle's `expected_moves` are legal and actually achieve the tactical goal
 implied by their category (checkmate for mate_in_1, a genuinely forced mate for
-mate_in_2, an unrecapturable capture worth real material for win_material, and a real
-"the opponent otherwise mates in 1" threat for avoid_mate_in_1).
+mate_in_2, an unrecapturable capture worth real material for win_material, a real
+"the opponent otherwise mates in 1" threat for avoid_mate_in_1, and a "deliver mate now
+or every other move lets the opponent mate you in 1" race for mate_in_1_or_lose).
 
 Board/action encoding (see performance_evaluation/games/chess puzzle files and
 engine/game/chess.cpp for the source of truth):
@@ -182,11 +183,35 @@ def check_avoid_mate_in_1(board, expected_ucis):
     return True, "OK"
 
 
+def check_mate_in_1_or_lose(board, expected_ucis):
+    legal = list(board.legal_moves)
+    mate_ucis = set(uci for uci in expected_ucis)
+    for uci in expected_ucis:
+        mv = chess.Move.from_uci(uci)
+        if mv not in legal:
+            return False, f"{uci} is not legal"
+        b = board.copy()
+        b.push(mv)
+        if not b.is_checkmate():
+            return False, f"{uci} does not deliver checkmate"
+    for mv in legal:
+        if mv.uci() in mate_ucis:
+            continue
+        b = board.copy()
+        b.push(mv)
+        if b.is_checkmate() or b.is_stalemate():
+            return False, f"{mv.uci()} ends the game instead of allowing a reply"
+        if not mate_in_1_moves(b):
+            return False, f"{mv.uci()} does not lose to an opponent mate-in-1 reply"
+    return True, "OK"
+
+
 CATEGORY_CHECKS = {
     "mate_in_1": check_mate_in_1,
     "win_material": check_win_material,
     "mate_in_2": check_mate_in_2,
     "avoid_mate_in_1": check_avoid_mate_in_1,
+    "mate_in_1_or_lose": check_mate_in_1_or_lose,
 }
 
 
