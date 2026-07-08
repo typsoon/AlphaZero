@@ -87,7 +87,7 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
 
     // Set wait_for_count to something more reasonable like 2-4 threads worth of batches, and
     // timeout to 2ms to prevent CPU threads from starving.
-    int wait_for_count = std::min(thread_count, 4) * mcts_batch_size;
+    int wait_for_count = std::min(thread_count, 2) * mcts_batch_size;
     int timeout_ms = 2;
     auto inferer_factory = NetworkInfererFactory(network_path, device, wait_for_count, timeout_ms);
     MCTSFactory mcts_factory(inferer_factory);

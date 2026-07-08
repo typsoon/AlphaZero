@@ -188,6 +188,21 @@ TEST(ReplayBufferTests, StaysCorrectUnderRepeatedEvictionChurn) {
     }
 }
 
+// ReplayBuffer::sample() calls torch::cuda::is_available() to decide whether to
+// pin its output tensors. The first such call lazily initializes the CUDA
+// driver/runtime, which - independently of anything these tests exercise -
+// segfaults inside CppUTest's own MemoryLeakDetector::report() at process exit
+// here (turnOffNewDeleteOverloads() below isn't enough to prevent it, seemingly
+// because some of libtorch's lazy CUDA init allocations are untracked/freed in
+// a way that corrupts CppUTest's leak-tracking list, not because of anything
+// wrong with ReplayBuffer itself - this is purely a test harness/CUDA-driver-
+// init interaction). These tests only verify buffer logic, not device
+// placement, so this binary is run with CUDA_VISIBLE_DEVICES="" (see dodo.py's
+// task_test_cpp) to hide CUDA from the process entirely and sidestep the crash
+// without weakening what's actually being tested. Setting the env var here in
+// main() is too late to help - by then libtorch's own static initializers have
+// already run and cached the device count - so it has to be set before the
+// process even starts.
 int main(int ac, char **av) {
     MemoryLeakWarningPlugin::turnOffNewDeleteOverloads();
     return CommandLineTestRunner::RunAllTests(ac, av);

@@ -192,10 +192,10 @@ if __name__ == "__main__":
             logging.warning(
                 f"Initial network file '{args.initial_network}' not found. Initializing a fresh AlphaZero network."
             )
-        if args.game == "connect4":
-            network = get_network(Connect4)
-        else:
-            network = get_network(Chess)
+            if args.game == "connect4":
+                network = get_network(Connect4)
+            else:
+                network = get_network(Chess)
     else:
         logging.info(
             "No initial network provided. Initializing a fresh AlphaZero network."

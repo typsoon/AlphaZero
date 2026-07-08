@@ -32,6 +32,19 @@ class ReplayBuffer {
     mutable std::shared_mutex rw_mutex;
     mutable std::mt19937 rng;
 
+    // Dense, contiguous [capacity, ...state_shape] / [capacity] mirrors of every
+    // transition's state and reward, kept alongside `buffer` so sample() can pull
+    // a whole minibatch out via a single torch::index_select_out() call instead of
+    // one .copy_()/accessor write per sampled row - see sample()'s comment for
+    // why that matters. Lazily shaped on the first add() call, once a state
+    // tensor's shape is known. Unlike dense_policy_cache, this duplicates nothing:
+    // every transition's state already has to be stored somewhere regardless, and
+    // add() re-points buffer[ptr].state at a view into states_buffer instead of
+    // keeping the caller's original tensor around, so there's exactly one copy of
+    // each state in memory, not two.
+    torch::Tensor states_buffer;
+    torch::Tensor rewards_buffer;
+
     // Bounds dense_policy_cache below regardless of capacity - see that
     // member for why an unbounded (capacity-sized) cache is dangerous.
     size_t max_cache_entries;

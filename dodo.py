@@ -356,7 +356,11 @@ def task_test_cpp():
             with_report(f"{test_bin}"),
             with_report(f"{test_chess}"),
             with_report(f"{test_mcts}"),
-            with_report(f"{test_replay_buffer}"),
+            # CUDA_VISIBLE_DEVICES="" hides CUDA from this process before it starts -
+            # see the comment above main() in test_replay_buffer.cpp for why that's
+            # needed (a CUDA-driver-init/CppUTest leak-detector interaction crashes
+            # the binary otherwise, unrelated to ReplayBuffer's own correctness).
+            with_report(f'CUDA_VISIBLE_DEVICES="" {test_replay_buffer}'),
         ],
         "task_dep": ["build"],
     }
