@@ -1,0 +1,14 @@
+{
+  "game": "chess",
+  "games_in_each_iteration": 1000,
+  "mcts_batch_size": 512,
+  "mcts_simulations": 800,
+  "batch_size": 512,
+  "minibatch_size": 4096,
+  "training_iterations": 100,
+  "loop_iterations": 1000,
+  "max_moves": 512,
+  "thread_count": 50,
+  "initial_network": "checkpoints/chess/chess_AZNetwork_0.pt",
+  "log_dir": "runs/chess"
+}

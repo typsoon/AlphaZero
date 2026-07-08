@@ -9,6 +9,7 @@ from .injectors import (
 from .network import AlphaZeroNetwork
 from .train import self_play_and_train_loop
 import argparse
+import json
 import os
 import shutil
 import logging
@@ -53,6 +54,15 @@ def prune_old_runs(runs_root: Path, max_runs: int) -> None:
 def get_args():
     parser = argparse.ArgumentParser(description="My arg parser")
 
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to a JSON file with training arguments (keys are argument "
+        "names, e.g. 'games_in_each_iteration'). Values in the file become "
+        "the new defaults for the arguments below; explicit CLI flags still "
+        "take precedence over them.",
+    )
     parser.add_argument(
         "--initial-network",
         type=str,
@@ -145,6 +155,21 @@ def get_args():
         "(oldest are deleted). Only applies when --log-dir is left at its "
         "default; ignored if you pass an explicit --log-dir. 0 disables pruning.",
     )
+
+    config_args, _ = parser.parse_known_args()
+    if config_args.config:
+        with open(config_args.config) as f:
+            config_values = json.load(f)
+        known_dests = {action.dest for action in parser._actions}
+        unknown_keys = sorted(set(config_values) - known_dests)
+        if unknown_keys:
+            raise ValueError(
+                f"Unknown key(s) in config file '{config_args.config}': {unknown_keys}"
+            )
+        parser.set_defaults(**config_values)
+        logging.info(
+            f"Loaded training config from '{config_args.config}': {config_values}"
+        )
 
     return parser.parse_args()
 

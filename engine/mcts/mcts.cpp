@@ -35,7 +35,8 @@ struct MCTS::Node {
     float Q() const;
     float UCB(float exploration_weight) const;
 
-    void expand(const std::vector<std::pair<int, float>> &policy, std::pmr::memory_resource *pool);
+    void expand(const std::vector<std::pair<int, float>> &policy, std::pmr::memory_resource *pool,
+                bool zero_children = false);
 
     bool terminal() const;
     bool is_expanded() const;
@@ -82,10 +83,13 @@ float MCTS::Node::UCB(float exploration_weight) const {
 }
 
 void MCTS::Node::expand(const std::vector<std::pair<int, float>> &policy,
-                        std::pmr::memory_resource *pool) {
+                        std::pmr::memory_resource *pool, bool zero_children) {
     // Allocate the children array now that the node is actually being expanded.
     children = static_cast<Node **>(pool->allocate(action_size * sizeof(Node *), alignof(Node *)));
-    std::memset(static_cast<void *>(children), 0, action_size * sizeof(Node *));
+    // Non-root nodes are only ever indexed via valid_actions (select_child()), so unwritten
+    // slots are never read; only the root's array is scanned in full (search()'s pi loop).
+    if (zero_children)
+        std::memset(static_cast<void *>(children), 0, action_size * sizeof(Node *));
 
     valid_actions = static_cast<int *>(pool->allocate(policy.size() * sizeof(int), alignof(int)));
     int idx = 0;
@@ -198,7 +202,7 @@ std::pair<std::vector<float>, float> MCTS::search(const Game &game, int num_simu
         network->infer(std::vector<const GameState *>{game.get_canonical_state().get()});
     float root_value = inference_res.front().value;
     auto p_init = get_policy_from_logits(inference_res.front(), true);
-    root_node.expand(p_init, &pool);
+    root_node.expand(p_init, &pool, /*zero_children=*/true);
 
     int simulations_done = 0;
     std::vector<std::pair<Node *, std::shared_ptr<Game>>> leaves;
