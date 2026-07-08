@@ -30,11 +30,13 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 # Detect TensorRT + CUDA runtime library paths and bake them into RPATH of all
 # executables so they can load TRT engines without needing LD_LIBRARY_PATH.
-set(_TRT_RPATH_DISCOVERY_SCRIPT
-    "import os; import nvidia, torch_tensorrt; trt=os.path.dirname(os.path.dirname(torch_tensorrt.__file__)); print(os.path.join(trt,'tensorrt_libs') + ';' + os.path.join(nvidia.__path__[0],'cuda_runtime','lib'))"
-)
+set(_trt_rpath_discovery_script
+    "import os; import nvidia, torch_tensorrt\n\
+trt = os.path.dirname(os.path.dirname(torch_tensorrt.__file__))\n\
+print(os.path.join(trt, 'tensorrt_libs') + ';' +\n\
+      os.path.join(nvidia.__path__[0], 'cuda_runtime', 'lib'))")
 execute_process(
-  COMMAND "${Python3_EXECUTABLE}" -c "${_TRT_RPATH_DISCOVERY_SCRIPT}"
+  COMMAND "${Python3_EXECUTABLE}" -c "${_trt_rpath_discovery_script}"
   RESULT_VARIABLE _trt_rpath_found
   OUTPUT_VARIABLE _trt_rpath_raw
   OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)

@@ -31,6 +31,20 @@ def test_train_loop_decreases_loss():
             # We ignore batch_size and just return our full dummy batch
             return self.states.clone(), self.policies.clone(), self.values.clone()
 
+        def get_sampler(self):
+            # Real ReplayBuffer.get_sampler() returns an RAII handle whose
+            # sample() is what actually pulls data out; this dummy has no
+            # sparse-to-dense cache to manage, so it can just hand back itself.
+            # AlphaZeroTrainer.train() uses this as a context manager
+            # (`with ... as sampler:`), so it needs __enter__/__exit__ too.
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
     buffer = DummyReplayBuffer()
 
     trainer = AlphaZeroTrainer(

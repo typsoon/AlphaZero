@@ -355,7 +355,8 @@ export default async function gameRoutes(server: FastifyInstance) {
     }
 
     const p1Id = p1Type === 'human' ? uuidv4() : null;
-    const p2Id = p2Type === 'human' ? (p1Type === 'human' ? p1Id : uuidv4()) : null;
+    const p2Id =
+      p2Type === 'human' ? (p1Type === 'human' ? p1Id : uuidv4()) : null;
 
     const history = [
       gameType === 'chess'

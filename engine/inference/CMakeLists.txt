@@ -7,11 +7,13 @@ if(NOT Python3_EXECUTABLE)
 endif()
 
 # Attempt to find libtorchtrt.so using Python
-set(_TRT_LIB_DISCOVERY_SCRIPT
-    "import os, torch_tensorrt; print('TRT_PATH=' + os.path.join(os.path.dirname(torch_tensorrt.__file__), 'lib', 'libtorchtrt.so'))"
-)
+set(_trt_lib_discovery_script
+    "import os, torch_tensorrt\n\
+print('TRT_PATH=' +\n\
+      os.path.join(os.path.dirname(torch_tensorrt.__file__), 'lib',\n\
+                   'libtorchtrt.so'))")
 execute_process(
-  COMMAND "${Python3_EXECUTABLE}" -c "${_TRT_LIB_DISCOVERY_SCRIPT}"
+  COMMAND "${Python3_EXECUTABLE}" -c "${_trt_lib_discovery_script}"
   RESULT_VARIABLE TRT_FOUND
   OUTPUT_VARIABLE TRT_LIB_OUTPUT
   OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
@@ -28,13 +30,13 @@ if(TRT_FOUND EQUAL 0 AND EXISTS "${TRT_LIB_PATH}")
                              PUBLIC ALPHAZERO_TRT_LIB_PATH="${TRT_LIB_PATH}")
 
   # Add tensorrt_libs and torch libs to RPATH
-  set(_TRT_RUNTIME_LIBS_DISCOVERY_SCRIPT
+  set(_trt_runtime_libs_discovery_script
       "import os, nvidia, torch_tensorrt\n\
 trt = os.path.dirname(os.path.dirname(torch_tensorrt.__file__))\n\
 print('TRT_LIBS_PATH=' + os.path.join(trt, 'tensorrt_libs') + ';' +\n\
       os.path.join(nvidia.__path__[0], 'cuda_runtime', 'lib'))")
   execute_process(
-    COMMAND "${Python3_EXECUTABLE}" -c "${_TRT_RUNTIME_LIBS_DISCOVERY_SCRIPT}"
+    COMMAND "${Python3_EXECUTABLE}" -c "${_trt_runtime_libs_discovery_script}"
     RESULT_VARIABLE TRT_LIBS_FOUND
     OUTPUT_VARIABLE TRT_LIBS_OUTPUT
     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)

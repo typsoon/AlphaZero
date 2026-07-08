@@ -16,9 +16,22 @@
 #include <utility>
 #include <vector>
 
-static torch::Tensor vector_to_tensor(std::vector<float> &data) {
-    // Optionally specify size if reshaping is needed
-    return torch::from_blob(data.data(), {static_cast<long>(data.size())}, torch::kFloat);
+// MCTS::search() returns a dense policy (one entry per possible encoded action,
+// zero everywhere it didn't visit) - pulling out just the nonzero entries here
+// is what lets ReplayBuffer store a handful of (index, value) pairs per
+// position instead of the full dense vector. torch::tensor() copies the data
+// in, so the returned tensors stay valid after `policy` (a local vector) goes
+// out of scope.
+static std::pair<torch::Tensor, torch::Tensor> sparsify_policy(const std::vector<float> &policy) {
+    std::vector<int64_t> indices;
+    std::vector<float> values;
+    for (size_t a = 0; a < policy.size(); a++) {
+        if (policy[a] != 0.0f) {
+            indices.push_back(static_cast<int64_t>(a));
+            values.push_back(policy[a]);
+        }
+    }
+    return {torch::tensor(indices, torch::kInt64), torch::tensor(values, torch::kFloat32)};
 }
 
 static void play_game(std::shared_ptr<Game> game, MCTS &mcts, ReplayBuffer &replay_buffer,
@@ -43,7 +56,8 @@ static void play_game(std::shared_ptr<Game> game, MCTS &mcts, ReplayBuffer &repl
             action = std::distance(policy.begin(), std::max_element(policy.begin(), policy.end()));
         }
 
-        trajectory.emplace_back(game_state_tensor, vector_to_tensor(policy).clone(), 0);
+        auto [policy_indices, policy_values] = sparsify_policy(policy);
+        trajectory.emplace_back(game_state_tensor, policy_indices, policy_values, 0);
         game->step(action);
     }
 

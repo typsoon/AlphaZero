@@ -240,9 +240,7 @@ async function evaluateEditorPosition() {
     }
     editorEvalValue.value = data.value ?? 0;
 
-    const policy = data.policy as
-      | number[]
-      | { index: number; value: number }[];
+    const policy = data.policy as number[] | { index: number; value: number }[];
     let entries: { action: number; prob: number }[];
     if (policy.length > 0 && typeof policy[0] === 'object') {
       entries = (policy as { index: number; value: number }[]).map((e) => ({
@@ -464,8 +462,10 @@ function downloadChessPuzzle() {
       if (cell === 'k') kingCounts.b++;
     }),
   );
-  if (kingCounts.w !== 1) warnings.push(`expected 1 white king, found ${kingCounts.w}`);
-  if (kingCounts.b !== 1) warnings.push(`expected 1 black king, found ${kingCounts.b}`);
+  if (kingCounts.w !== 1)
+    warnings.push(`expected 1 white king, found ${kingCounts.w}`);
+  if (kingCounts.b !== 1)
+    warnings.push(`expected 1 black king, found ${kingCounts.b}`);
   if (expectedUcis.length === 0) warnings.push('no expected moves added');
 
   // Matches performance_evaluation/games/chess/*/*.json: en_passant/castling are
@@ -477,7 +477,9 @@ function downloadChessPuzzle() {
     player: editorSideToMove.value === 'b' ? 1 : 0,
     en_passant: -1,
     castling: [1, 1, 1, 1, 1, 1],
-    expected_moves: [...new Set(expectedUcis.map(uciToAction))].sort((a, b) => a - b),
+    expected_moves: [...new Set(expectedUcis.map(uciToAction))].sort(
+      (a, b) => a - b,
+    ),
   };
 
   const data = JSON.stringify(puzzle, null, 2) + '\n';
@@ -1221,7 +1223,10 @@ async function makeMove(action: number) {
       </div>
 
       <!-- Evaluation results -->
-      <div v-if="editorEvalError || editorEvalValue !== null" class="eval-panel">
+      <div
+        v-if="editorEvalError || editorEvalValue !== null"
+        class="eval-panel"
+      >
         <div v-if="editorEvalError" class="eval-error">
           ⚠ {{ editorEvalError }}
         </div>
@@ -1249,7 +1254,9 @@ async function makeMove(action: number) {
                   }"
                 ></span
               ></span>
-              <span class="eval-move-pct">{{ (m.prob * 100).toFixed(1) }}%</span>
+              <span class="eval-move-pct"
+                >{{ (m.prob * 100).toFixed(1) }}%</span
+              >
             </li>
           </ol>
         </template>

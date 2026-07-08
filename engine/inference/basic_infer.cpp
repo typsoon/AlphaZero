@@ -94,17 +94,24 @@ class DynamicBatcher {
             //     this same-stream by construction - ordering is automatic via
             //     program order, no event handoff needed at all.
             if (!copy_stream.has_value() && device.is_cuda()) {
-                copy_stream = c10::cuda::getStreamFromPool(/*isHighPriority=*/false, device.index());
+                copy_stream =
+                    c10::cuda::getStreamFromPool(/*isHighPriority=*/false, device.index());
             }
             std::optional<c10::cuda::CUDAStreamGuard> stream_guard;
             if (device.is_cuda()) {
-                stream_guard.emplace(*copy_stream);
+                // copy_stream is always populated above whenever device.is_cuda().
+                stream_guard.emplace(*copy_stream); // NOLINT(bugprone-unchecked-optional-access)
             }
 
             auto result = infer_method({batched});
             auto outputs = result.toTuple()->elements();
-            auto policy_gpu = outputs[0].toTensor();
-            auto value_gpu = outputs[1].toTensor();
+            // .to(device) is a no-op for a well-behaved model whose outputs already
+            // match the input's device. It's a real fixup for models that internally
+            // construct fresh tensors without a device= arg (e.g. torch.ones(...)),
+            // which silently land on the CPU default regardless of the input device -
+            // without this, the gather() calls below would mismatch devices.
+            auto policy_gpu = outputs[0].toTensor().to(device);
+            auto value_gpu = outputs[1].toTensor().to(device);
 
             // Row lengths vary per state (each has its own legal-action count), so
             // pad to this round's max.
@@ -132,7 +139,8 @@ class DynamicBatcher {
                 // side.
                 if (!pinned_value_buffer.defined() || pinned_value_buffer.size(0) < batch_size) {
                     auto value_shape = value_gpu.sizes().vec();
-                    value_shape[0] = std::max<int64_t>(batch_size, wait_for_count * 2);
+                    value_shape[0] =
+                        std::max<int64_t>(batch_size, static_cast<int64_t>(wait_for_count) * 2);
                     pinned_value_buffer = torch::empty(
                         value_shape,
                         torch::TensorOptions().dtype(value_gpu.dtype()).pinned_memory(true));
@@ -142,10 +150,14 @@ class DynamicBatcher {
                         pinned_index_buffer.size(0) < batch_size ||
                         pinned_index_buffer.size(1) < max_actions) {
                         pinned_index_buffer = torch::zeros(
-                            {std::max<int64_t>(batch_size, wait_for_count * 2), max_actions},
+                            {std::max<int64_t>(batch_size,
+                                               static_cast<int64_t>(wait_for_count) * 2),
+                             max_actions},
                             torch::TensorOptions().dtype(torch::kInt64).pinned_memory(true));
                         pinned_gathered_buffer = torch::empty(
-                            {std::max<int64_t>(batch_size, wait_for_count * 2), max_actions},
+                            {std::max<int64_t>(batch_size,
+                                               static_cast<int64_t>(wait_for_count) * 2),
+                             max_actions},
                             torch::TensorOptions().dtype(policy_gpu.dtype()).pinned_memory(true));
                     }
                     // Use the buffers' actual (already-allocated) width, not this
@@ -191,7 +203,7 @@ class DynamicBatcher {
                 // Everything above (forward pass, gather, both D2H copies) ran on
                 // copy_stream, so waiting on it alone - rather than the whole device -
                 // is sufficient and avoids blocking on unrelated device activity.
-                copy_stream->synchronize();
+                copy_stream->synchronize(); // NOLINT(bugprone-unchecked-optional-access)
 
                 // Below we extract every value any consumer will need into private
                 // per-result vectors before this function returns, so gathered_host/
@@ -411,7 +423,7 @@ static std::shared_ptr<Network> get_network_func(std::string network_file_path,
             static const bool trt_runtime_loaded = []() {
                 void *handle = dlopen(ALPHAZERO_TRT_LIB_PATH, RTLD_NOW | RTLD_GLOBAL);
                 if (handle == nullptr) {
-                    const char *dlopen_error = dlerror();
+                    const char *dlopen_error = dlerror(); // NOLINT(concurrency-mt-unsafe)
                     spdlog::warn("Failed to pre-load libtorchtrt from '{}': {}",
                                  ALPHAZERO_TRT_LIB_PATH,
                                  dlopen_error != nullptr ? dlopen_error : "unknown error");
@@ -469,17 +481,18 @@ static std::shared_ptr<Network> get_network_func(std::string network_file_path,
 static void enable_cudagraphs_if_requested(torch::Device device) {
     if (!device.is_cuda())
         return;
-    if (std::getenv("ALPHAZERO_ENABLE_CUDAGRAPHS") == nullptr)
+    if (std::getenv("ALPHAZERO_ENABLE_CUDAGRAPHS") == nullptr) // NOLINT(concurrency-mt-unsafe)
         return;
     constexpr int64_t kSubgraphCudagraphs = 1; // torch_tensorrt::core::runtime::SUBGRAPH_CUDAGRAPHS
     auto op = c10::Dispatcher::singleton().findSchema({"tensorrt::set_cudagraphs_mode", ""});
     if (!op.has_value()) {
         spdlog::warn("tensorrt::set_cudagraphs_mode op not found; CUDAGraphs mode not enabled "
-                    "(is libtorchtrt.so actually loaded?)");
+                     "(is libtorchtrt.so actually loaded?)");
         return;
     }
     op->typed<void(int64_t)>().call(kSubgraphCudagraphs);
-    spdlog::info("CUDAGraphs mode enabled for TensorRT inference (ALPHAZERO_ENABLE_CUDAGRAPHS set)");
+    spdlog::info(
+        "CUDAGraphs mode enabled for TensorRT inference (ALPHAZERO_ENABLE_CUDAGRAPHS set)");
 }
 #endif
 

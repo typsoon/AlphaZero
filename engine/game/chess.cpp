@@ -3,9 +3,93 @@
 #include "bitboard.hpp"
 #include <cmath>
 #include <iostream>
+#include <random>
+
+namespace {
+
+// One random 64-bit key per (square, piece type), plus side-to-move, castling-rights
+// and en-passant-file keys - the standard Zobrist hashing scheme used to identify
+// chess positions for threefold-repetition purposes. Keys are generated once, with a
+// fixed seed so hashes (and therefore repetition counts) are reproducible across runs
+// - nothing here needs to be cryptographically random, just well-distributed and
+// stable for the lifetime of the process.
+struct ZobristKeys {
+    uint64_t piece[8][8][12]; // NOLINT(*-avoid-c-arrays)
+    uint64_t side_to_move;
+    // 0=white kingside, 1=white queenside, 2=black kingside, 3=black queenside
+    uint64_t castling[4];        // NOLINT(*-avoid-c-arrays)
+    uint64_t en_passant_file[8]; // NOLINT(*-avoid-c-arrays)
+
+    ZobristKeys() // NOLINT(cppcoreguidelines-pro-type-member-init)
+    {
+        // Fixed seed is intentional (see comment above) - not meant to be
+        // unpredictable.
+        // NOLINTNEXTLINE(*-msc32-c,*-msc51-cpp,bugprone-random-generator-seed)
+        std::mt19937_64 rng(0x9E3779B97F4A7C15ULL);
+        for (auto &plane : piece)
+            for (auto &row : plane)
+                for (auto &key : row)
+                    key = rng();
+        side_to_move = rng();
+        for (auto &key : castling)
+            key = rng();
+        for (auto &key : en_passant_file)
+            key = rng();
+    }
+};
+
+const ZobristKeys &zobrist_keys() {
+    static const ZobristKeys keys;
+    return keys;
+}
+
+// Maps piece values (-6..-1, 1..6; 0/EMPTY is never looked up) onto a dense 0..11
+// index: white pieces 0..5, black pieces 6..11.
+int zobrist_piece_index(int8_t piece) {
+    return piece > 0 ? (piece - 1) : (6 + (-piece - 1));
+}
+
+} // namespace
 
 Chess::Chess() {
     Chess::reset();
+}
+
+uint64_t Chess::compute_position_hash() const {
+    const auto &z = zobrist_keys();
+    uint64_t h = 0;
+    for (int r = 0; r < 8; ++r) {
+        for (int c = 0; c < 8; ++c) {
+            int8_t p = current_board[r][c]; // NOLINT(*-avoid-c-arrays)
+            if (p != EMPTY)
+                h ^= z.piece[r][c][zobrist_piece_index(p)];
+        }
+    }
+    if (player == 1)
+        h ^= z.side_to_move;
+    if (K_move_count == 0 && R2_move_count == 0)
+        h ^= z.castling[0]; // White kingside
+    if (K_move_count == 0 && R1_move_count == 0)
+        h ^= z.castling[1]; // White queenside
+    if (k_move_count == 0 && r2_move_count == 0)
+        h ^= z.castling[2]; // Black kingside
+    if (k_move_count == 0 && r1_move_count == 0)
+        h ^= z.castling[3]; // Black queenside
+    // Mirrors the exact condition move_rules_P/move_rules_p use to decide whether an
+    // en-passant capture is legal right now (only true for the single ply right after
+    // the double pawn push) - a position isn't "the same" for repetition purposes if
+    // one occurrence has a capturable en-passant pawn and the other doesn't.
+    if (en_passant != -1 && std::abs(en_passant_move - move_count) == 1)
+        h ^= z.en_passant_file[en_passant];
+    return h;
+}
+
+bool Chess::is_fifty_move_draw() const {
+    return halfmove_clock >= 100;
+}
+
+bool Chess::is_threefold_repetition() const {
+    return repetition_count >= 3;
 }
 
 static constexpr Chess::board_t INITIAL_BOARD = {
@@ -31,6 +115,11 @@ void Chess::reset() {
     R2_move_count = 0;
     K_move_count = 0;
     player = 0;
+
+    halfmove_clock = 0;
+    position_history.clear();
+    position_history.push_back(compute_position_hash());
+    repetition_count = 1;
 }
 
 bool Chess::is_white(int8_t p) {
@@ -110,9 +199,22 @@ void Chess::set_custom_state(const board_t &board, int8_t active_player, int8_t 
     K_move_count = K_mc;
     R1_move_count = R1_mc;
     R2_move_count = R2_mc;
+
+    // Puzzle/custom positions start with no prior game history to draw on - matches
+    // move_count's existing "start fresh" treatment just above.
+    halfmove_clock = 0;
+    position_history.clear();
+    position_history.push_back(compute_position_hash());
+    repetition_count = 1;
 }
 
 bool Chess::is_terminal() const {
+    // Cheap checks first: is_fifty_move_draw() is O(1) and is_threefold_repetition()
+    // is now O(1) too (repetition_count is maintained incrementally in move_piece()),
+    // both far cheaper than actions(true)'s full legal-move search, which simulates
+    // check-avoidance for every candidate move it generates.
+    if (is_fifty_move_draw() || is_threefold_repetition())
+        return true;
     return actions(true).empty();
 }
 
@@ -123,9 +225,14 @@ int Chess::get_current_player() const {
 float Chess::reward() const {
     if (!is_terminal())
         return 0.0f;
-    if (check_status())
-        return -1.0f;
-    return 0.0f;
+    // No-legal-moves takes precedence over the automatic draw rules in determining
+    // the *outcome*: a checkmated (or stalemated) position is decided by that fact
+    // alone, even if the fifty-move clock or a repetition count also happens to have
+    // been reached on this exact move - the game already ended via checkmate before
+    // either automatic-draw rule would even matter.
+    if (actions(true).empty())
+        return check_status() ? -1.0f : 0.0f; // checkmate vs stalemate
+    return 0.0f;                              // fifty-move-rule or threefold-repetition draw
 }
 
 std::shared_ptr<const GameState> Chess::get_canonical_state() const {
@@ -628,6 +735,15 @@ void Chess::move_rules_K(PosList &moves) const {
 }
 
 void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
+    // Snapshot progress (pawn move or capture) before anything is mutated below -
+    // both branches read/clear these exact squares, so this check is the same
+    // regardless of which player is moving. En-passant capture is the one case where
+    // the destination square is empty but a piece is still captured (mirrors the
+    // exact condition each branch below uses to remove the captured pawn).
+    bool moved_pawn = (current_board[r1][c1] == W_PAWN || current_board[r1][c1] == B_PAWN);
+    bool is_capture = current_board[r2][c2] != EMPTY ||
+                      (moved_pawn && std::abs(c1 - c2) == 1 && current_board[r2][c2] == EMPTY);
+
     if (player == 0) {
         auto promoted = false;
         auto piece = current_board[r1][c1];
@@ -636,8 +752,21 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
             R1_move_count++;
         if (piece == W_ROOK && r1 == 7 && c1 == 7)
             R2_move_count++;
-        if (piece == W_KING)
+        if (piece == W_KING) {
             K_move_count++;
+            // Castling is encoded as a plain 2-square king move (see move_rules_K) -
+            // the corresponding rook has to be relocated by hand here since it isn't
+            // part of the (r1,c1)->(r2,c2) move being applied.
+            if (c2 - c1 == 2) {
+                current_board[7][7] = EMPTY;
+                current_board[7][5] = W_ROOK;
+                R2_move_count++;
+            } else if (c2 - c1 == -2) {
+                current_board[7][0] = EMPTY;
+                current_board[7][3] = W_ROOK;
+                R1_move_count++;
+            }
+        }
         if (piece == W_PAWN) {
             if (std::abs(r1 - r2) > 1) {
                 en_passant = c1;
@@ -675,8 +804,21 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
             r1_move_count++;
         if (piece == B_ROOK && r1 == 0 && c1 == 7)
             r2_move_count++;
-        if (piece == B_KING)
+        if (piece == B_KING) {
             k_move_count++;
+            // Castling is encoded as a plain 2-square king move (see move_rules_k) -
+            // the corresponding rook has to be relocated by hand here since it isn't
+            // part of the (r1,c1)->(r2,c2) move being applied.
+            if (c2 - c1 == 2) {
+                current_board[0][7] = EMPTY;
+                current_board[0][5] = B_ROOK;
+                r2_move_count++;
+            } else if (c2 - c1 == -2) {
+                current_board[0][0] = EMPTY;
+                current_board[0][3] = B_ROOK;
+                r1_move_count++;
+            }
+        }
         if (piece == B_PAWN) {
             if (std::abs(r1 - r2) > 1) {
                 en_passant = c1;
@@ -707,6 +849,19 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
         player = 0;
         move_count++;
     }
+
+    halfmove_clock = (moved_pawn || is_capture) ? 0 : static_cast<int16_t>(halfmove_clock + 1);
+
+    uint64_t new_hash = compute_position_hash();
+    position_history.push_back(new_hash);
+    // Recomputed once per move (not once per is_terminal()/is_threefold_repetition()
+    // call - see the comment on repetition_count in chess.hpp). O(history size),
+    // bounded by however many plies this game has run so far.
+    int8_t count = 0;
+    for (uint64_t h : position_history)
+        if (h == new_hash)
+            ++count;
+    repetition_count = count;
 }
 
 bool Chess::can_castle(int side) const {

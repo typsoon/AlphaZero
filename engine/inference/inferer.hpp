@@ -13,7 +13,7 @@ struct inference_result {
     // copying/retaining ~500x more data than any consumer actually reads.
     std::vector<int> legal_actions;
     std::vector<float> legal_action_logits;
-    float value;
+    float value{};
 };
 struct Inferer {
     // Inferer should have a method to predict the policy and value for a given

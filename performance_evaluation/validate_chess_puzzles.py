@@ -30,12 +30,28 @@ import chess
 from python.utils import PROJ_ROOT
 
 PIECE_MAP = {
-    "P": 1, "N": 2, "B": 3, "R": 4, "Q": 5, "K": 6,
-    "p": -1, "n": -2, "b": -3, "r": -4, "q": -5, "k": -6,
+    "P": 1,
+    "N": 2,
+    "B": 3,
+    "R": 4,
+    "Q": 5,
+    "K": 6,
+    "p": -1,
+    "n": -2,
+    "b": -3,
+    "r": -4,
+    "q": -5,
+    "k": -6,
 }
 INV_PIECE_MAP = {v: k for k, v in PIECE_MAP.items()}
 INV_PROMO = {0: "", 1: "q", 2: "r", 3: "n", 4: "b"}
-PIECE_VALUES = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
+PIECE_VALUES = {
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+}
 
 
 def rc_to_square_name(row, col):
@@ -140,21 +156,19 @@ def check_win_material(board, expected_ucis):
 
 
 def check_mate_in_2(board, expected_ucis):
-    if len(expected_ucis) != 1:
-        return False, "mate_in_2 puzzles must have exactly one expected first move"
-    uci = expected_ucis[0]
-    mv = chess.Move.from_uci(uci)
-    if mv not in board.legal_moves:
-        return False, f"{uci} is not legal"
     attacker = board.turn
     if forced_mate(board, 1, attacker):
-        return False, f"position is already mate_in_1, not mate_in_2"
-    b = board.copy()
-    b.push(mv)
-    if b.is_checkmate():
-        return False, f"{uci} is already checkmate, this is mate_in_1 not mate_in_2"
-    if not forced_mate(b, 2, attacker):
-        return False, f"{uci} does not force mate within 2 plies for the opponent"
+        return False, "position is already mate_in_1, not mate_in_2"
+    for uci in expected_ucis:
+        mv = chess.Move.from_uci(uci)
+        if mv not in board.legal_moves:
+            return False, f"{uci} is not legal"
+        b = board.copy()
+        b.push(mv)
+        if b.is_checkmate():
+            return False, f"{uci} is already checkmate, this is mate_in_1 not mate_in_2"
+        if not forced_mate(b, 2, attacker):
+            return False, f"{uci} does not force mate within 2 plies for the opponent"
     return True, "OK"
 
 
@@ -243,7 +257,16 @@ def process_puzzle(file_path):
 def main():
     files = [
         Path(p)
-        for p in glob.glob(str(PROJ_ROOT / "performance_evaluation" / "games" / "chess" / "*" / "*.json"))
+        for p in glob.glob(
+            str(
+                PROJ_ROOT
+                / "performance_evaluation"
+                / "games"
+                / "chess"
+                / "*"
+                / "*.json"
+            )
+        )
     ]
 
     all_ok = True

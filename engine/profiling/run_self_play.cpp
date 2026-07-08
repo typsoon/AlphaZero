@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    ReplayBuffer replay_buffer(1000000);
+    ReplayBuffer replay_buffer(1000000, initial_game->getActionSize());
 
     std::cout << "Starting self play profiling with " << num_games << " games on " << thread_count
               << " threads... (max_moves=" << max_moves

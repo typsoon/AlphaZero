@@ -51,4 +51,10 @@ if(BUILD_TESTS)
   target_link_libraries(test_mcts PRIVATE engine CppUTest "${TORCH_LIBRARIES}")
   target_compile_definitions(test_mcts
                              PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
+
+  add_executable(test_replay_buffer tests/test_replay_buffer.cpp)
+  target_link_libraries(test_replay_buffer PRIVATE engine CppUTest
+                                                   "${TORCH_LIBRARIES}")
+  target_compile_definitions(test_replay_buffer
+                             PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
 endif()

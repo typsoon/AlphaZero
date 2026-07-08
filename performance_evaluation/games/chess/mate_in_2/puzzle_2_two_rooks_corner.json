@@ -12,5 +12,5 @@
   "player": 0,
   "en_passant": -1,
   "castling": [1, 1, 1, 1, 1, 1],
-  "expected_moves": [6460]
+  "expected_moves": [6460, 11905]
 }

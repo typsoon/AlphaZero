@@ -15,11 +15,20 @@ using std::vector;
 
 // Sized for chess, the larger of the two games: Node::expand() allocates a
 // children array sized to the full action space (20480 * 8 bytes = ~160KB) per
-// expansion, so at the default 800 simulations/search a single search() call can
-// need up to ~130MB. The arena is fully reset (pool.release()) at the start of
-// every search() call, so undersizing it means most expansions overflow into the
-// upstream allocator (malloc) on effectively every move.
-constexpr size_t default_arena_size_in_bytes = static_cast<const size_t>(256 * 1024 * 1024);
+// expansion, so at the default 800 simulations/search a single search() call
+// needs up to ~130MB (800 * (~160KB children array + ~2KB for the expanded
+// child Node structs themselves and their valid_actions array), worst case one
+// expansion per simulation). 160MB keeps ~23% headroom above that worst case
+// while still mattering a lot at scale: self_play() (see training/self_play.cpp)
+// keeps one MCTS - and one arena - alive per OpenMP thread for the whole run,
+// so at thread_count=64 this constant alone is responsible for
+// thread_count * default_arena_size_in_bytes of self-play's peak memory (was
+// 16GiB at the old 256MB default; a documented contributor to two OOM kills of
+// the actual training run). If you raise mcts_num_simulations well past 800,
+// re-derive this: undersizing it means most expansions overflow into the
+// upstream allocator (malloc) instead, which still works but is slower. The
+// arena is fully reset (pool.release()) at the start of every search() call.
+constexpr size_t default_arena_size_in_bytes = static_cast<const size_t>(160 * 1024 * 1024);
 
 // TODO: test as many methods as you can
 class MCTS {

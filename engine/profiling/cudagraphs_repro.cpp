@@ -6,9 +6,9 @@
 // C++ invocation path itself is the remaining variable.
 #include <ATen/core/dispatch/Dispatcher.h>
 #include <ATen/cuda/CUDAEvent.h>
+#include <atomic>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
-#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <optional>
@@ -27,8 +27,8 @@ int main(int argc, char *argv[]) {
     std::string kineto_out = argv[2];
 
     torch::Device device(torch::kCUDA);
-    auto network = std::make_shared<torch::jit::script::Module>(
-        torch::jit::load(network_path, device));
+    auto network =
+        std::make_shared<torch::jit::script::Module>(torch::jit::load(network_path, device));
     network->to(device);
     network->eval();
     auto infer_method = network->get_method("forward");
@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
         std::optional<c10::cuda::CUDAStream> copy_stream;
         torch::Tensor pinned_index;
         torch::Tensor pinned_gathered;
-        std::mt19937 gen(0);
+        std::mt19937 gen(0); // NOLINT(*-msc32-c,*-msc51-cpp,bugprone-random-generator-seed)
         std::uniform_int_distribution<int> dist(1, 64);
         std::uniform_int_distribution<int> action_dist(0, 20479);
         for (int i = 0; i < 300; ++i) {
@@ -78,8 +78,8 @@ int main(int argc, char *argv[]) {
                 at::cuda::CUDAEvent infer_done;
                 infer_done.record();
                 if (!copy_stream.has_value()) {
-                    copy_stream = c10::cuda::getStreamFromPool(/*isHighPriority=*/false,
-                                                               device.index());
+                    copy_stream =
+                        c10::cuda::getStreamFromPool(/*isHighPriority=*/false, device.index());
                 }
                 c10::cuda::CUDAStreamGuard stream_guard(*copy_stream);
                 infer_done.block(*copy_stream);

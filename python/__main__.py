@@ -10,7 +10,10 @@ from .network import AlphaZeroNetwork
 from .train import self_play_and_train_loop
 import argparse
 import os
+import shutil
 import logging
+from datetime import datetime
+from pathlib import Path
 from python.utils import PROJ_ROOT
 
 logging.basicConfig(
@@ -23,7 +26,28 @@ logging.basicConfig(
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # thread_count = 4
 # games_in_each_iteration = 500
-replay_buffer_size = 1500 * 35
+# Sized to retain ~4 iterations of games_in_each_iteration=1000 chess games
+# (run_training.sh's setting), at an estimated ~80 plies/game - we don't have an
+# exact transitions-per-iteration figure (get_size() saturates at capacity, so
+# it can't tell us how many transitions self-play actually produced past that
+# point). With the sparse ReplayBuffer (~5KB/transition instead of ~85KB dense),
+# this is only ~1.5GB, well inside the ~6-10GB of headroom measured during
+# self-play's peak memory usage - if the real average game length turns out
+# longer than 80 plies, there's room to raise this further.
+replay_buffer_size = 1000 * 80 * 4
+
+
+def prune_old_runs(runs_root: Path, max_runs: int) -> None:
+    """Deletes the oldest auto-named run directories under runs_root, keeping at
+    most max_runs. Run directory names are timestamps (%Y%m%d-%H%M%S), so
+    lexicographic sort is also chronological order. Unlike checkpoints (bounded
+    by CheckpointManager), nothing else caps how many of these accumulate across
+    repeated invocations - left unchecked they grow forever."""
+    if max_runs <= 0 or not runs_root.is_dir():
+        return
+    run_dirs = sorted(d for d in runs_root.iterdir() if d.is_dir())
+    for old_dir in run_dirs[:-max_runs] if len(run_dirs) > max_runs else []:
+        shutil.rmtree(old_dir, ignore_errors=True)
 
 
 def get_args():
@@ -106,6 +130,21 @@ def get_args():
         default=800,
         help="Number of MCTS simulations per move",
     )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="TensorBoard log directory. Defaults to runs/<game>/<timestamp>. "
+        "Pass an empty string to disable TensorBoard logging.",
+    )
+    parser.add_argument(
+        "--max-runs",
+        type=int,
+        default=5,
+        help="Maximum number of auto-named TensorBoard runs to keep per game "
+        "(oldest are deleted). Only applies when --log-dir is left at its "
+        "default; ignored if you pass an explicit --log-dir. 0 disables pruning.",
+    )
 
     return parser.parse_args()
 
@@ -152,6 +191,20 @@ if __name__ == "__main__":
     else:
         game_data = (Chess, self_play)
 
+    if args.log_dir == "":
+        log_dir = None
+    elif args.log_dir is not None:
+        log_dir = args.log_dir
+    else:
+        runs_root = PROJ_ROOT / "runs" / args.game
+        prune_old_runs(runs_root, args.max_runs)
+        log_dir = str(runs_root / datetime.now().strftime("%Y%m%d-%H%M%S"))
+
+    if log_dir is not None:
+        logging.info(
+            f"Logging to TensorBoard at '{log_dir}'. Run `tensorboard --logdir {log_dir}` to monitor training."
+        )
+
     self_play_and_train_loop(
         checkpoint_manager=manager,
         network_type=AlphaZeroNetwork,
@@ -168,4 +221,5 @@ if __name__ == "__main__":
         max_moves=args.max_moves,
         mcts_batch_size=args.mcts_batch_size,
         mcts_simulations=args.mcts_simulations,
+        log_dir=log_dir,
     )

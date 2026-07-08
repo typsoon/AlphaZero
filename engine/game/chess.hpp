@@ -3,6 +3,7 @@
 #define CHESS_HPP
 
 #include "game.hpp"
+#include <cstdint>
 #include <vector>
 
 // NOLINTNEXTLINE(cppcoreguidelines-use-enum-class)
@@ -66,6 +67,21 @@ class Chess : public Game2D<8, 8> {
     int16_t r1_move_count{}, r2_move_count{}, k_move_count{};
     int16_t R1_move_count{}, R2_move_count{}, K_move_count{};
 
+    // Plies since the last pawn move or capture. FIDE's fifty-move rule is 50 full
+    // moves (100 plies) without progress by either side - see is_fifty_move_draw().
+    int16_t halfmove_clock{};
+    // One Zobrist hash per position reached so far in this game (including the
+    // starting position), in order. Used for threefold-repetition detection - see
+    // is_threefold_repetition(). Grows by one entry per ply; bounded in practice by
+    // whatever max_moves the caller enforces (self-play/training default 512).
+    std::vector<uint64_t> position_history;
+    // How many times the *current* (last-pushed) position has occurred so far,
+    // including itself. Recomputed once per move in move_piece() rather than
+    // rescanned on every is_terminal()/reward() call, since is_terminal() in
+    // particular is called very frequently (once per MCTS tree node visited, once
+    // per self-play ply) relative to how often the position actually changes.
+    int8_t repetition_count{1};
+
   public:
     static constexpr int action_dim = 64 * 64 * 5;
     static constexpr std::array<int, 3> state_dim = {19, 8, 8};
@@ -90,8 +106,20 @@ class Chess : public Game2D<8, 8> {
     void write_canonical_state(float *out_buffer) const override;
     std::vector<int64_t> get_state_shape() const override;
 
+    // FIDE's fifty-move rule: automatic draw once 100 plies (50 full moves) have
+    // passed with no pawn move and no capture by either side.
+    bool is_fifty_move_draw() const;
+    // Automatic draw once the current position (same piece placement, same side to
+    // move, same castling rights, same en-passant capture availability) has occurred
+    // for the third time - see position_history/repetition_count above.
+    bool is_threefold_repetition() const;
+
   private:
     using pos_t = std::pair<int8_t, int8_t>;
+
+    // Zobrist hash of the current position (board + side to move + castling rights +
+    // en-passant file, if currently capturable) - see chess.cpp for the key table.
+    uint64_t compute_position_hash() const;
 
     //  Helper functions
     static bool is_white(int8_t p);

@@ -101,35 +101,50 @@ class AlphaZeroNetwork(nn.Module):
         # This has to be imported in order to load tensorrt networks
         import torch_tensorrt  # noqa: F811
 
-        # TensorRT compilation requires eval mode and cuda
-        self.eval()
-        if not next(self.parameters()).is_cuda:
-            self.cuda()
+        # TensorRT compilation requires eval mode and cuda. Restore the
+        # caller's original device/mode afterward, even on failure - this gets
+        # called mid-training on the live model (e.g. from
+        # CheckpointManager.add_checkpoint), and the device shift previously
+        # had no way back: unlike .eval() (undone by the next
+        # AlphaZeroTrainer.train() call), a CPU->CUDA move here stuck
+        # permanently. No-op in the actual training setup, which already runs
+        # on CUDA throughout - this only matters for CPU-mode training/tests.
+        was_training = self.training
+        original_device = next(self.parameters()).device
 
-        # We need to provide input shape constraints for dynamic batch sizes
-        # Typical batch size is between 1 and 128
-        inputs = [
-            torch_tensorrt.Input(
-                min_shape=[1, self.conv_in.in_channels, self._height, self._width],
-                opt_shape=[32, self.conv_in.in_channels, self._height, self._width],
-                max_shape=[
-                    max_first_dim_of_input,
-                    self.conv_in.in_channels,
-                    self._height,
-                    self._width,
-                ],
-                dtype=torch.float32,
+        try:
+            self.eval()
+            if not next(self.parameters()).is_cuda:
+                self.cuda()
+
+            # We need to provide input shape constraints for dynamic batch sizes
+            # Typical batch size is between 1 and 128
+            inputs = [
+                torch_tensorrt.Input(
+                    min_shape=[1, self.conv_in.in_channels, self._height, self._width],
+                    opt_shape=[32, self.conv_in.in_channels, self._height, self._width],
+                    max_shape=[
+                        max_first_dim_of_input,
+                        self.conv_in.in_channels,
+                        self._height,
+                        self._width,
+                    ],
+                    dtype=torch.float32,
+                )
+            ]
+
+            scripted_model = torch.jit.script(self)
+            trt_model = torch_tensorrt.compile(
+                scripted_model,
+                inputs=inputs,
+                enabled_precisions={torch.float32},
+                ir="torchscript",
             )
-        ]
-
-        scripted_model = torch.jit.script(self)
-        trt_model = torch_tensorrt.compile(
-            scripted_model,
-            inputs=inputs,
-            enabled_precisions={torch.float32},
-            ir="torchscript",
-        )
-        trt_model.save(path)
+            trt_model.save(path)
+        finally:
+            self.to(original_device)
+            if was_training:
+                self.train()
 
     @staticmethod
     def load_az_network(path: PathLike, device: torch.device) -> "AlphaZeroNetwork":

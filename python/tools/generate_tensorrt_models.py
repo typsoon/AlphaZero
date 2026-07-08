@@ -69,7 +69,9 @@ def main():
                     )
                     try:
                         if args.max_first_dim is not None:
-                            network.tensorrt_and_save_network(trt_path, args.max_first_dim)
+                            network.tensorrt_and_save_network(
+                                trt_path, args.max_first_dim
+                            )
                         else:
                             network.tensorrt_and_save_network(trt_path)
                     except Exception as e:

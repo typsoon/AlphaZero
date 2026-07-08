@@ -17,16 +17,34 @@ PYBIND11_DECLARE_HOLDER_TYPE(T, std::unique_ptr<T>)
 PYBIND11_MODULE(engine_bind, m) {
     try {
         py::class_<Transition>(m, "Transition")
-            .def(py::init<torch::Tensor, torch::Tensor, float>())
+            .def(py::init<torch::Tensor, torch::Tensor, torch::Tensor, float>())
             .def_readwrite("state", &Transition::state)
-            .def_readwrite("policy", &Transition::policy)
+            .def_readwrite("policy_indices", &Transition::policy_indices)
+            .def_readwrite("policy_values", &Transition::policy_values)
             .def_readwrite("reward", &Transition::reward);
 
+        py::class_<ReplayBuffer::CachedSampler>(m, "CachedSampler")
+            .def("sample", &ReplayBuffer::CachedSampler::sample)
+            .def("close", &ReplayBuffer::CachedSampler::close)
+            // Context-manager protocol: `with buf.get_sampler() as s: ...`
+            // guarantees close() runs at the block boundary rather than
+            // whenever CPython's refcounting happens to collect the object.
+            .def("__enter__",
+                 [](ReplayBuffer::CachedSampler &self) -> ReplayBuffer::CachedSampler & {
+                     return self;
+                 })
+            .def("__exit__", [](ReplayBuffer::CachedSampler &self, const py::object &,
+                                const py::object &, const py::object &) {
+                self.close();
+                return false; // don't suppress exceptions
+            });
+
         py::class_<ReplayBuffer>(m, "ReplayBuffer")
-            .def(py::init<size_t>())
+            .def(py::init<size_t, int64_t, size_t>(), py::arg("capacity"), py::arg("action_size"),
+                 py::arg("max_cache_entries") = 4096)
             .def("add", &ReplayBuffer::add)
-            .def("sample", &ReplayBuffer::sample)
-            .def("get_size", &ReplayBuffer::get_size);
+            .def("get_size", &ReplayBuffer::get_size)
+            .def("get_sampler", &ReplayBuffer::get_sampler);
 
         py::class_<Game, std::shared_ptr<Game>>(m, "Game")
             .def("get_legal_actions", &Game::get_legal_actions)
