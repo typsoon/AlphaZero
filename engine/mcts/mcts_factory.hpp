@@ -13,11 +13,12 @@ class MCTSFactory {
     float eps;
     float alpha;
     size_t arena_size_bytes;
+    float fpu_reduction;
 
   public:
     MCTSFactory(InfererFactory &inferer_factory, float c_init = 1.25, float c_base = 19652,
                 float eps = 0.25, float alpha = 0.3,
-                size_t arena_size_bytes = default_arena_size_in_bytes);
+                size_t arena_size_bytes = default_arena_size_in_bytes, float fpu_reduction = 0.0f);
 
     std::unique_ptr<MCTS> get_mcts();
 };

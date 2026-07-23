@@ -1,12 +1,17 @@
 #include "basic_inferer.hpp"
+#include "encoder_factory.hpp"
+#include "inference_cache.hpp"
 #include "inferer.hpp"
 #include <ATen/core/TensorBody.h>
 #include <ATen/core/dispatch/Dispatcher.h>
+#include <c10/cuda/CUDAFunctions.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <condition_variable>
 #include <connect4.hpp>
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <future>
@@ -15,6 +20,7 @@
 #include <optional>
 #include <spdlog/spdlog.h>
 #include <thread>
+#include <unordered_map>
 #ifdef ALPHAZERO_TRT_LIB_PATH
 #include <dlfcn.h>
 #endif
@@ -31,7 +37,18 @@ class DynamicBatcher {
     int wait_for_count;
     int timeout_ms;
     bool stop = false;
+    // Two threads, pipelined: `worker` gathers submitted tasks (as before) and then
+    // does the CPU-side prep for a batch (write_canonical_state, legal-action
+    // extraction) into one of two alternating buffer slots; `gpu_executor_thread`
+    // takes each prepared batch and does the GPU-side work (H2D copy, forward pass,
+    // gather, D2H, promise fulfillment). Splitting these into separate threads lets
+    // `worker` start gathering/prepping the *next* batch (into the other slot)
+    // while `gpu_executor_thread` is still working on the current one, instead of
+    // the single worker thread doing both in sequence - measured (via perf sched)
+    // to matter because process_batch's state-write loop is entirely single-
+    // threaded and was sitting squarely in between every GPU launch.
     std::thread worker;
+    std::thread gpu_executor_thread;
 
     struct Task {
         std::vector<const GameState *> states;
@@ -39,11 +56,56 @@ class DynamicBatcher {
         std::promise<std::vector<inference_result>> promise;
     };
 
-    torch::Tensor pinned_buffer;
-    torch::Tensor pinned_index_buffer;
-    torch::Tensor pinned_gathered_buffer;
-    torch::Tensor pinned_value_buffer;
+    struct BufferSlot {
+        torch::Tensor pinned_buffer;
+        torch::Tensor pinned_index_buffer;
+        torch::Tensor pinned_gathered_buffer;
+        torch::Tensor pinned_value_buffer;
+    };
+    // Scale-dependent: at thread_count=12 (this dev machine's real core count),
+    // kineto A/B testing (60 games/mcts_batch_size=64) found kNumBufferSlots=2 vs.
+    // 3 made no measurable difference (~20% GPU idle either way) - with only 2 real
+    // pipeline stages (worker's CPU prep, gpu_executor_thread's GPU work), 2 slots
+    // already let worker run a full batch ahead, which seemed like enough to fully
+    // overlap the two stages. But re-tested at thread_count=50 (matching
+    // chess_params.json's production setting, 100 games): kNumBufferSlots=3 is
+    // reproducibly ~16-17% faster wall-clock (37.2-37.6s vs. 44.1-44.4s at 2,
+    // repeated twice each). GPU idle *ratio* stays similar between the two there
+    // too, but total GPU busy time itself shrinks at 3 slots (35.4s -> ~29.4s) -
+    // consistent with the extra slot letting worker get further ahead under
+    // thread_count=50's much larger batch sizes (measured median 336, up to 2244 -
+    // see training/self_play.cpp git history), forming fewer/larger aggregate
+    // batches per gpu_executor_thread call and cutting per-call overhead, not just
+    // hiding CPU-prep time behind GPU exec. Kept at 3: it's neutral-to-better at
+    // low thread counts and a real win at the production-scale ones.
+    static constexpr int kNumBufferSlots = 3;
+    BufferSlot buffer_slots[kNumBufferSlots];
     std::vector<int64_t> single_shape;
+    // Encodes states into the batch tensor. Null until resolved from the game
+    // type on the first prepare_batch (or supplied by the factory). The worker
+    // thread is the only one that touches it, so lazy init needs no lock.
+    std::shared_ptr<StateEncoder> encoder;
+
+    struct PreparedBatch {
+        std::vector<std::shared_ptr<Task>> tasks;
+        int slot{};
+        int games_count{};
+        int total_count{};
+        std::vector<int> legal_actions_flat;
+        std::vector<int> legal_actions_offsets;
+    };
+
+    // Handoff between worker and gpu_executor_thread. slot_busy[i] is true from the
+    // moment worker hands off a batch using slot i until gpu_executor_thread
+    // finishes all GPU work and promise fulfillment for it - worker must wait for
+    // slot_busy[i] to clear before it can start writing a new batch into slot i.
+    // ready_batch is a capacity-1 handoff (worker sets it, gpu_executor_thread
+    // takes it) guarded by the same mutex/cv.
+    std::mutex pipeline_mtx;
+    std::condition_variable pipeline_cv;
+    bool slot_busy[kNumBufferSlots] = {};
+    std::optional<PreparedBatch> ready_batch;
+    bool gpu_stop = false;
 
     std::vector<std::shared_ptr<Task>> pending_tasks;
     int current_count = 0;
@@ -64,11 +126,12 @@ class DynamicBatcher {
 
     std::vector<inference_result>
     execute_tensor_batch(torch::Tensor batched, const std::vector<int> &legal_actions_flat,
-                         const std::vector<int> &legal_actions_offsets) {
+                         const std::vector<int> &legal_actions_offsets, int slot) {
         if (batched.size(0) == 0)
             return {};
         auto batch_size = batched.size(0);
         batched = batched.to(device);
+        BufferSlot &buf = buffer_slots[slot];
 
         std::vector<inference_result> out;
         try {
@@ -137,24 +200,25 @@ class DynamicBatcher {
                 // before the D2H copy cuts the payload by roughly the same ~500x that
                 // extracting only legal actions already saved on the host-processing
                 // side.
-                if (!pinned_value_buffer.defined() || pinned_value_buffer.size(0) < batch_size) {
+                if (!buf.pinned_value_buffer.defined() ||
+                    buf.pinned_value_buffer.size(0) < batch_size) {
                     auto value_shape = value_gpu.sizes().vec();
                     value_shape[0] =
                         std::max<int64_t>(batch_size, static_cast<int64_t>(wait_for_count) * 2);
-                    pinned_value_buffer = torch::empty(
+                    buf.pinned_value_buffer = torch::empty(
                         value_shape,
                         torch::TensorOptions().dtype(value_gpu.dtype()).pinned_memory(true));
                 }
                 if (max_actions > 0) {
-                    if (!pinned_index_buffer.defined() ||
-                        pinned_index_buffer.size(0) < batch_size ||
-                        pinned_index_buffer.size(1) < max_actions) {
-                        pinned_index_buffer = torch::zeros(
+                    if (!buf.pinned_index_buffer.defined() ||
+                        buf.pinned_index_buffer.size(0) < batch_size ||
+                        buf.pinned_index_buffer.size(1) < max_actions) {
+                        buf.pinned_index_buffer = torch::zeros(
                             {std::max<int64_t>(batch_size,
                                                static_cast<int64_t>(wait_for_count) * 2),
                              max_actions},
                             torch::TensorOptions().dtype(torch::kInt64).pinned_memory(true));
-                        pinned_gathered_buffer = torch::empty(
+                        buf.pinned_gathered_buffer = torch::empty(
                             {std::max<int64_t>(batch_size,
                                                static_cast<int64_t>(wait_for_count) * 2),
                              max_actions},
@@ -169,9 +233,9 @@ class DynamicBatcher {
                     // ~1000x slower (a "Memcpy DtoH (Device -> Pageable)" instead of a
                     // fast pinned DMA) despite the underlying storage genuinely being
                     // pinned - traced via nsys backtraces directly to this call.
-                    gather_width = pinned_gathered_buffer.size(1);
+                    gather_width = buf.pinned_gathered_buffer.size(1);
 
-                    auto index_host = pinned_index_buffer.slice(0, 0, batch_size);
+                    auto index_host = buf.pinned_index_buffer.slice(0, 0, batch_size);
                     auto *index_ptr = index_host.data_ptr<int64_t>();
                     // Padding slots (rows shorter than max_actions, or columns beyond
                     // it up to gather_width) must point at a valid index - the
@@ -187,18 +251,42 @@ class DynamicBatcher {
                         }
                     }
 
+                    // TEMP DIAGNOSTIC: validate every index before it reaches the GPU
+                    // gather() call, to pin down the exact bad value instead of a bare
+                    // CUDA device-side assert.
+                    {
+                        int64_t action_dim = policy_gpu.size(1);
+                        for (int64_t i = 0; i < batch_size; ++i) {
+                            int begin = legal_actions_offsets[i];
+                            int end = legal_actions_offsets[i + 1];
+                            for (int j = begin; j < end; ++j) {
+                                int action = legal_actions_flat[j];
+                                if (action < 0 || action >= action_dim) {
+                                    spdlog::error("BAD ACTION INDEX: row={} j={} action={} "
+                                                  "action_dim={} begin={} end={} "
+                                                  "row_len={} batch_size={} "
+                                                  "legal_actions_flat.size()={} "
+                                                  "legal_actions_offsets.size()={}",
+                                                  i, j, action, action_dim, begin, end, end - begin,
+                                                  batch_size, legal_actions_flat.size(),
+                                                  legal_actions_offsets.size());
+                                }
+                            }
+                        }
+                    }
+
                     // Stream-ordered on the same (default) CUDA stream as the H2D copy
                     // below and the forward pass above, so no manual sync is needed
                     // between them - CUDA guarantees ordering within a stream.
                     auto index_gpu = index_host.to(device, true);
                     auto gathered_gpu = policy_gpu.gather(1, index_gpu);
 
-                    auto gathered_dst = pinned_gathered_buffer.slice(0, 0, batch_size);
+                    auto gathered_dst = buf.pinned_gathered_buffer.slice(0, 0, batch_size);
                     gathered_dst.copy_(gathered_gpu, true);
                     gathered_host = gathered_dst;
                 }
 
-                auto value_dst = pinned_value_buffer.slice(0, 0, batch_size);
+                auto value_dst = buf.pinned_value_buffer.slice(0, 0, batch_size);
                 value_dst.copy_(value_gpu, true);
                 // Everything above (forward pass, gather, both D2H copies) ran on
                 // copy_stream, so waiting on it alone - rather than the whole device -
@@ -251,7 +339,11 @@ class DynamicBatcher {
         return out;
     }
 
-    void process_batch(std::vector<std::shared_ptr<Task>> tasks) {
+    // CPU-only: writes canonical states + extracts legal actions into buffer_slots
+    // [slot]. No GPU calls here at all - that's the whole point of splitting this
+    // out from what used to be process_batch(), so it can run on `worker` while
+    // `gpu_executor_thread` is still busy with a previous batch in the other slot.
+    std::optional<PreparedBatch> prepare_batch(std::vector<std::shared_ptr<Task>> tasks, int slot) {
         int total_count = 0;
         int games_count = 0;
         for (const auto &t : tasks) {
@@ -259,27 +351,37 @@ class DynamicBatcher {
             games_count += t->count;
         }
         if (total_count == 0)
-            return;
+            return std::nullopt;
 
-        if (single_shape.empty()) {
+        if (!encoder) {
             for (const auto &t : tasks) {
                 if (!t->states.empty()) {
-                    single_shape = t->states[0]->get_state_shape();
+                    encoder = default_encoder_for(*t->states[0]);
                     break;
                 }
             }
         }
+        if (single_shape.empty() && encoder) {
+            single_shape = encoder->state_shape();
+        }
 
-        torch::Tensor games_batch;
+        BufferSlot &buf = buffer_slots[slot];
         if (games_count > 0) {
-            if (!pinned_buffer.defined() || pinned_buffer.size(0) < games_count) {
+            if (!buf.pinned_buffer.defined() || buf.pinned_buffer.size(0) < games_count) {
                 auto alloc_shape = single_shape;
                 alloc_shape.insert(alloc_shape.begin(), std::max(games_count, wait_for_count * 2));
-                auto options = torch::TensorOptions().dtype(torch::kFloat32).pinned_memory(true);
-                pinned_buffer = torch::empty(alloc_shape, options);
+                // Pinned (page-locked) host memory only accelerates the async
+                // H2D copy to a CUDA device; on a CPU device it buys nothing and
+                // - worse - forces a CUDA context init (the pinned allocator is
+                // CUDA's host allocator), which fails outright when no GPU is
+                // usable (e.g. the CPU-only sanitizer stress harnesses, or a box
+                // whose GPU is fully occupied). Only request it on the CUDA path.
+                auto options =
+                    torch::TensorOptions().dtype(torch::kFloat32).pinned_memory(device.is_cuda());
+                buf.pinned_buffer = torch::empty(alloc_shape, options);
             }
 
-            auto *giant_data = pinned_buffer.data_ptr<float>();
+            auto *giant_data = buf.pinned_buffer.data_ptr<float>();
             int state_size = 1;
             for (long i : single_shape)
                 state_size *= i;
@@ -287,15 +389,12 @@ class DynamicBatcher {
             int offset = 0;
             for (const auto &t : tasks) {
                 for (auto &state : t->states) {
-                    state->write_canonical_state(giant_data +
-                                                 (static_cast<ptrdiff_t>(offset * state_size)));
+                    encoder->write_canonical_state(
+                        *state, giant_data + (static_cast<ptrdiff_t>(offset * state_size)));
                     offset++;
                 }
             }
-            games_batch = pinned_buffer.slice(0, 0, games_count).to(device, /*non_blocking=*/true);
         }
-
-        torch::Tensor giant_batch = games_batch;
 
         // Legal actions for every state in the batch, computed here (rather than
         // supplied by the caller) since every GameState can produce its own via
@@ -314,29 +413,102 @@ class DynamicBatcher {
             }
         }
 
-        std::vector<inference_result> results;
-        try {
-            results = execute_tensor_batch(giant_batch, legal_actions_flat, legal_actions_offsets);
-        } catch (...) {
-            auto ex = std::current_exception();
-            for (auto &t : tasks) {
-                t->promise.set_exception(ex);
-            }
-            return;
+        PreparedBatch pb;
+        pb.tasks = std::move(tasks);
+        pb.slot = slot;
+        pb.games_count = games_count;
+        pb.total_count = total_count;
+        pb.legal_actions_flat = std::move(legal_actions_flat);
+        pb.legal_actions_offsets = std::move(legal_actions_offsets);
+        return pb;
+    }
+
+    // GPU-only (plus the H2D copy that kicks it off): runs on gpu_executor_thread.
+    // Frees pb.slot (via slot_busy) once done, letting `worker` reuse it for a
+    // future batch.
+    void execute_prepared_batch(PreparedBatch pb) {
+        BufferSlot &buf = buffer_slots[pb.slot];
+        torch::Tensor giant_batch;
+        if (pb.games_count > 0) {
+            giant_batch =
+                buf.pinned_buffer.slice(0, 0, pb.games_count).to(device, /*non_blocking=*/true);
         }
 
-        int offset = 0;
-        for (const auto &t : tasks) {
-            std::vector<inference_result> chunk;
-            chunk.reserve(t->count);
-            for (int i = 0; i < t->count; i++) {
-                chunk.push_back(results[offset++]);
+        if (device.is_cuda()) {
+            // slot_busy[pb.slot] exists to protect exactly one thing from the
+            // cross-thread race worker_loop()'s wait(!slot_busy[slot]) guards
+            // against: buf.pinned_buffer, the only per-slot buffer prepare_batch()
+            // (called from worker_loop, a different thread) writes into - the
+            // other three BufferSlot members (pinned_index_buffer,
+            // pinned_gathered_buffer, pinned_value_buffer) are written only by
+            // execute_tensor_batch() below, itself, on this same gpu_executor_thread,
+            // serially, so they need no cross-thread protection at all.
+            // buf.pinned_buffer's *only* reader is the H2D copy just above - so
+            // once that copy has genuinely completed, the slot is already safe to
+            // reuse, without waiting for the rest of this function (forward pass,
+            // gather, D2H) to finish too.
+            //
+            // The synchronize() below is required to make that true: with
+            // non_blocking=true, .to(device) only *issues* the copy and returns
+            // immediately - it does not wait for it. execute_tensor_batch()'s own
+            // copy_stream->synchronize() (further down) does not cover this either,
+            // since it only waits for copy_stream's own work (forward-pass
+            // consumption + gather + D2H); it does not wait for this H2D copy
+            // (issued on whatever stream was ambient at this call site, before
+            // copy_stream's guard is even entered), nor for TensorRT's own
+            // execution - measured via nsys (cuda_gpu_trace on a live self-play
+            // run): TensorRT's kernels consistently land on their own separate
+            // internal stream, distinct from both the H2D-copy stream and
+            // copy_stream, with no observed dependency linking any of the three,
+            // and 203 confirmed cases were found where TensorRT's first kernel
+            // (which reads this same giant_batch data) started executing *while*
+            // this H2D copy was still in flight. Without an explicit sync here,
+            // clearing slot_busy[pb.slot] (previously done only at the very end of
+            // this function, after copy_stream->synchronize()) was not actually a
+            // reliable signal that buf.pinned_buffer was safe to overwrite -
+            // reopening the same host-memory race the slot_busy wait in
+            // worker_loop() exists to prevent, just via a path the CPU-side
+            // pipeline_mtx/slot_busy bookkeeping alone couldn't see. A full device
+            // sync (rather than something scoped to just the specific streams
+            // involved) sidesteps needing to pin down every stream TensorRT's
+            // runtime might use internally.
+            c10::cuda::device_synchronize();
+        }
+
+        {
+            std::scoped_lock plock(pipeline_mtx);
+            slot_busy[pb.slot] = false;
+        }
+        pipeline_cv.notify_all();
+
+        std::vector<inference_result> results;
+        std::exception_ptr ex;
+        try {
+            results = execute_tensor_batch(giant_batch, pb.legal_actions_flat,
+                                           pb.legal_actions_offsets, pb.slot);
+        } catch (...) {
+            ex = std::current_exception();
+        }
+
+        if (ex) {
+            for (auto &t : pb.tasks) {
+                t->promise.set_exception(ex);
             }
-            t->promise.set_value(std::move(chunk));
+        } else {
+            int offset = 0;
+            for (auto &t : pb.tasks) {
+                std::vector<inference_result> chunk;
+                chunk.reserve(t->count);
+                for (int i = 0; i < t->count; i++) {
+                    chunk.push_back(results[offset++]);
+                }
+                t->promise.set_value(std::move(chunk));
+            }
         }
     }
 
     void worker_loop() {
+        int next_slot = 0;
         while (true) {
             std::vector<std::shared_ptr<Task>> tasks_to_execute;
             {
@@ -360,18 +532,83 @@ class DynamicBatcher {
                 }
             }
 
-            if (!tasks_to_execute.empty()) {
-                process_batch(std::move(tasks_to_execute));
+            if (tasks_to_execute.empty())
+                continue;
+
+            int slot = next_slot;
+            next_slot = (next_slot + 1) % kNumBufferSlots;
+
+            // Wait for this specific slot to be free (i.e. gpu_executor_thread
+            // finished the batch that last used it, two rounds ago) BEFORE
+            // prepare_batch() below writes into buffer_slots[slot]'s pinned
+            // memory - not just before the ready_batch handoff. prepare_batch()
+            // writes canonical states directly into that slot's pinned_buffer,
+            // and gpu_executor_thread's execute_prepared_batch() reads from
+            // that same buffer via a non-blocking H2D copy that can still be
+            // in flight; writing into it here first (the previous bug) raced
+            // that in-flight read/copy, corrupting the batch gpu_executor_thread
+            // was still processing and, depending on allocator behavior when
+            // the buffer needed to grow, unrelated heap memory too (observed
+            // as a glibc `_int_malloc` heap-corruption abort during self-play).
+            {
+                std::unique_lock<std::mutex> plock(pipeline_mtx);
+                pipeline_cv.wait(plock, [&] { return !slot_busy[slot]; });
             }
+
+            auto prepared = prepare_batch(std::move(tasks_to_execute), slot);
+            if (!prepared)
+                continue;
+
+            // Separate wait for the single-item ready_batch handoff to be
+            // clear (gpu_executor_thread picked up whatever was there before) -
+            // independent of the slot-readiness wait above, since a free slot
+            // doesn't imply the handoff itself is free.
+            std::unique_lock<std::mutex> plock(pipeline_mtx);
+            pipeline_cv.wait(plock, [&] { return !ready_batch.has_value(); });
+            slot_busy[slot] = true;
+            ready_batch = std::move(*prepared);
+            plock.unlock();
+            pipeline_cv.notify_all();
+        }
+
+        {
+            std::scoped_lock plock(pipeline_mtx);
+            gpu_stop = true;
+        }
+        pipeline_cv.notify_all();
+    }
+
+    void gpu_executor_loop() {
+        while (true) {
+            PreparedBatch pb;
+            {
+                std::unique_lock<std::mutex> plock(pipeline_mtx);
+                pipeline_cv.wait(plock, [&] { return gpu_stop || ready_batch.has_value(); });
+                if (!ready_batch.has_value()) {
+                    if (gpu_stop)
+                        break;
+                    continue;
+                }
+                pb = std::move(*ready_batch);
+                ready_batch.reset();
+            }
+            // Let `worker` know the handoff slot is free before doing the (slow) GPU
+            // work below, instead of after - worker can start preparing its next
+            // batch immediately rather than waiting on this round's GPU work too.
+            pipeline_cv.notify_all();
+
+            execute_prepared_batch(std::move(pb));
         }
     }
 
   public:
     DynamicBatcher(int wait_for_count, int timeout_ms, std::shared_ptr<Network> network,
-                   torch::Device device)
+                   torch::Device device, std::shared_ptr<StateEncoder> encoder = nullptr)
         : wait_for_count(wait_for_count), timeout_ms(timeout_ms), network(network),
           infer_method(network->get_method("forward")), device(device) {
+        this->encoder = std::move(encoder);
         worker = std::thread(&DynamicBatcher::worker_loop, this);
+        gpu_executor_thread = std::thread(&DynamicBatcher::gpu_executor_loop, this);
     }
 
     ~DynamicBatcher() {
@@ -382,6 +619,9 @@ class DynamicBatcher {
         state_arrived_cv.notify_all();
         if (worker.joinable()) {
             worker.join();
+        }
+        if (gpu_executor_thread.joinable()) {
+            gpu_executor_thread.join();
         }
     }
 
@@ -405,14 +645,98 @@ class DynamicBatcher {
     }
 };
 
-NetworkInferer::NetworkInferer(std::shared_ptr<DynamicBatcher> batcher, torch::Device device)
-    : Inferer(device), batcher(std::move(batcher)) {}
+NetworkInferer::NetworkInferer(std::shared_ptr<DynamicBatcher> batcher, torch::Device device,
+                               std::shared_ptr<InferenceCache> cache,
+                               std::shared_ptr<StateEncoder> encoder)
+    : Inferer(device), batcher(std::move(batcher)), cache(std::move(cache)),
+      encoder(std::move(encoder)) {}
 
 vector<inference_result> NetworkInferer::infer(const vector<const GameState *> &states) {
     if (states.empty())
         return {};
 
-    return batcher->submit(states);
+    if (!cache)
+        return batcher->submit(states);
+
+    if (!encoder)
+        encoder = default_encoder_for(*states[0]);
+
+    size_t n = states.size();
+    vector<inference_result> results(n);
+    std::vector<uint64_t> keys(n);
+    std::vector<bool> hit(n, false);
+
+    // The cache key must be the exact network input, so the canonical tensor
+    // is written once into a per-thread scratch buffer here just to be hashed
+    // (see inference_cache.hpp for why no game-level hash is safe). For
+    // misses that tensor write happens again inside the batcher's
+    // prepare_batch - redundant, but tiny next to the inference the hits are
+    // saving.
+    static thread_local std::vector<float> scratch;
+    auto shape = encoder->state_shape();
+    size_t state_size = 1;
+    for (int64_t d : shape)
+        state_size *= static_cast<size_t>(d);
+    for (size_t i = 0; i < n; ++i) {
+        scratch.resize(state_size);
+        encoder->write_canonical_state(*states[i], scratch.data());
+        keys[i] = InferenceCache::hash_state(scratch.data(), state_size);
+        hit[i] = cache->lookup(keys[i], results[i]);
+    }
+
+    // Submit only the misses, deduplicated by key: distinct MCTS nodes in one
+    // batch can still be transpositions of each other (the caller's own
+    // dedupe in evaluate_batch() is by Node*, which can't see that), and
+    // identical inputs would produce identical outputs anyway.
+    std::vector<const GameState *> miss_states;
+    std::vector<size_t> miss_index_of(n, 0);
+    std::unordered_map<uint64_t, size_t> first_miss_with_key;
+    for (size_t i = 0; i < n; ++i) {
+        if (hit[i])
+            continue;
+        auto [it, inserted] = first_miss_with_key.try_emplace(keys[i], miss_states.size());
+        miss_index_of[i] = it->second;
+        if (inserted)
+            miss_states.push_back(states[i]);
+    }
+
+    if (!miss_states.empty()) {
+        auto miss_results = batcher->submit(miss_states);
+        for (const auto &[key, miss_idx] : first_miss_with_key) {
+            cache->insert(key, miss_results[miss_idx]);
+        }
+        // Copy, not move: several i's can share one deduplicated miss_results
+        // element, and a move would gut it for every consumer after the first.
+        for (size_t i = 0; i < n; ++i) {
+            if (!hit[i])
+                results[i] = miss_results[miss_index_of[i]];
+        }
+    }
+
+    // TEMP DIAGNOSTIC (env-gated): verify every delivered result actually
+    // belongs to the state it's paired with, by comparing its legal_actions
+    // against a fresh recomputation. Distinguishes cache-served poison from
+    // batcher-level mispairing at the exact point of delivery.
+    static const bool verify_results = std::getenv("ALPHAZERO_VERIFY_INFER_RESULTS") != nullptr;
+    if (verify_results) {
+        for (size_t i = 0; i < n; ++i) {
+            auto expected = states[i]->get_legal_actions();
+            if (results[i].legal_actions != expected) {
+                std::string got;
+                for (int a : results[i].legal_actions)
+                    got += std::to_string(a) + " ";
+                std::string want;
+                for (int a : expected)
+                    want += std::to_string(a) + " ";
+                spdlog::critical("INFER RESULT MISMATCH: i={} source={} key={:#x} "
+                                 "got_legal_actions=[{}] expected=[{}]",
+                                 i, hit[i] ? "CACHE_HIT" : "BATCHER_MISS", keys[i], got, want);
+                std::abort();
+            }
+        }
+    }
+
+    return results;
 }
 
 static std::shared_ptr<Network> get_network_func(std::string network_file_path,
@@ -497,19 +821,37 @@ static void enable_cudagraphs_if_requested(torch::Device device) {
 #endif
 
 NetworkInfererFactory::NetworkInfererFactory(std::string network_file_path, torch::Device device,
-                                             int wait_for_count, int timeout_ms)
+                                             int wait_for_count, int timeout_ms,
+                                             size_t transposition_cache_entries,
+                                             std::shared_ptr<StateEncoder> encoder)
     : network_file_path(std::move(network_file_path)), device(device),
       wait_for_count(wait_for_count), timeout_ms(timeout_ms),
       network(get_network_func(this->network_file_path, device)) {
+    this->encoder = std::move(encoder);
     network->to(device);
     network->eval();
 #ifdef ALPHAZERO_TRT_LIB_PATH
     enable_cudagraphs_if_requested(device);
 #endif
-    batcher = std::make_shared<DynamicBatcher>(wait_for_count, timeout_ms, network, device);
+    batcher = std::make_shared<DynamicBatcher>(wait_for_count, timeout_ms, network, device,
+                                               this->encoder);
+    if (transposition_cache_entries > 0) {
+        cache = std::make_shared<InferenceCache>(transposition_cache_entries);
+    }
+}
+
+NetworkInfererFactory::~NetworkInfererFactory() {
+    if (cache) {
+        uint64_t hits = cache->hits();
+        uint64_t misses = cache->misses();
+        uint64_t total = hits + misses;
+        spdlog::info("Inference cache: {} hits / {} lookups ({:.1f}% hit rate)", hits, total,
+                     total > 0 ? 100.0 * static_cast<double>(hits) / static_cast<double>(total)
+                               : 0.0);
+    }
 }
 
 std::unique_ptr<Inferer> NetworkInfererFactory::get_inferer() {
     auto lock_guard = std::scoped_lock(get_inferer_mutex);
-    return std::make_unique<NetworkInferer>(batcher, device);
+    return std::make_unique<NetworkInferer>(batcher, device, cache, encoder);
 }

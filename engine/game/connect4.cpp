@@ -13,7 +13,7 @@
 
 using std::vector;
 
-Connect4::Connect4() : board(), currentPlayer(1), finished(false), _reward(0.0f) {}
+Connect4::Connect4() : currentPlayer(1), _reward(0.0f), board(), finished(false) {}
 
 static int determine_current_player(const Connect4::board_t &board) {
     int player1_count = 0;
@@ -52,8 +52,8 @@ Connect4::Connect4(const std::vector<std::vector<int>> &initial_board)
     : Connect4(vector_to_board_t(initial_board)) {}
 
 Connect4::Connect4(const board_t &initial_board)
-    : board(initial_board), currentPlayer(determine_current_player(initial_board)), finished(false),
-      _reward(0.0f) {
+    : currentPlayer(determine_current_player(initial_board)), _reward(0.0f), board(initial_board),
+      finished(false) {
 
     // Evaluate terminal state using the new static functions
     if (hasWin(board, currentPlayer)) {
@@ -184,19 +184,9 @@ std::shared_ptr<const GameState> Connect4::get_canonical_state() const {
     return shared_from_this();
 }
 
-// TODO: utilize state dim
-std::vector<int64_t> Connect4::get_state_shape() const {
-    return {1, ROWS, COLS};
-}
-
-void Connect4::write_canonical_state(float *out_buffer) const {
-    int idx = 0;
-    for (int row = 0; row < ROWS; row++) {
-        for (int col = 0; col < COLS; col++) {
-            out_buffer[idx++] = static_cast<float>(board[row][col] * currentPlayer);
-        }
-    }
-}
+// The neural-network input encoding used to live here (write_canonical_state /
+// get_state_shape); it has moved to Connect4Encoder (engine/game/connect4_encoder.cpp),
+// which reads this class's position via friendship. See engine/game/state_encoder.hpp.
 
 std::shared_ptr<Game> Connect4::clone() const {
     return std::make_shared<Connect4>(*this);

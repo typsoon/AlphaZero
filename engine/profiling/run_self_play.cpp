@@ -12,9 +12,15 @@ int main(int argc, char *argv[]) {
     if (argc < 5) {
         std::cerr << "Usage: " << argv[0]
                   << " <game> <network_path> <num_games> <thread_count> [max_moves] "
-                     "[kineto_out] [mcts_num_simulations] [mcts_batch_size]\n"
+                     "[kineto_out] [mcts_num_simulations] [mcts_batch_size] "
+                     "[fast_mcts_num_simulations] [full_search_probability] "
+                     "[use_gumbel_search] [max_num_considered_actions]\n"
                   << "  Pass an empty string (\"\") for kineto_out to skip kineto profiling "
-                     "while still setting mcts_num_simulations/mcts_batch_size.\n";
+                     "while still setting mcts_num_simulations/mcts_batch_size.\n"
+                  << "  Pass full_search_probability=1 to disable playout cap randomization "
+                     "(every move gets the full search).\n"
+                  << "  Pass use_gumbel_search=1 to use MCTS::search_gumbel() instead of "
+                     "MCTS::search() for every move.\n";
         return 1;
     }
 
@@ -31,6 +37,11 @@ int main(int argc, char *argv[]) {
     bool use_kineto = !kineto_out_file.empty();
     int mcts_num_simulations = (argc >= 8) ? std::stoi(argv[7]) : 800;
     int mcts_batch_size = (argc >= 9) ? std::stoi(argv[8]) : 32;
+    int fast_mcts_num_simulations = (argc >= 10) ? std::stoi(argv[9]) : 100;
+    float full_search_probability = (argc >= 11) ? std::stof(argv[10]) : 0.25f;
+    bool use_gumbel_search = (argc >= 12) ? (std::stoi(argv[11]) != 0) : false;
+    int max_num_considered_actions = (argc >= 13) ? std::stoi(argv[12]) : 16;
+    size_t transposition_cache_entries = (argc >= 14) ? std::stoull(argv[13]) : 1000000;
 
     if (use_kineto) {
         torch::profiler::impl::ProfilerConfig config(torch::profiler::impl::ProfilerState::KINETO,
@@ -61,10 +72,17 @@ int main(int argc, char *argv[]) {
     std::cout << "Starting self play profiling with " << num_games << " games on " << thread_count
               << " threads... (max_moves=" << max_moves
               << ", mcts_num_simulations=" << mcts_num_simulations
-              << ", mcts_batch_size=" << mcts_batch_size << ")" << '\n';
+              << ", mcts_batch_size=" << mcts_batch_size
+              << ", fast_mcts_num_simulations=" << fast_mcts_num_simulations
+              << ", full_search_probability=" << full_search_probability
+              << ", use_gumbel_search=" << use_gumbel_search
+              << ", max_num_considered_actions=" << max_num_considered_actions
+              << ", transposition_cache_entries=" << transposition_cache_entries << ")" << '\n';
 
     self_play(initial_game, network_path, replay_buffer, num_games, thread_count,
-              mcts_num_simulations, mcts_batch_size, max_moves);
+              mcts_num_simulations, mcts_batch_size, max_moves, fast_mcts_num_simulations,
+              full_search_probability, transposition_cache_entries, use_gumbel_search,
+              max_num_considered_actions);
 
     if (use_kineto) {
         auto profiler_result = torch::autograd::profiler::disableProfiler();

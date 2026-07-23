@@ -1,5 +1,6 @@
 #include <chrono>
 #include <connect4.hpp>
+#include <connect4_encoder.hpp>
 #include <iostream>
 #include <torch/script.h>
 #include <torch/torch.h>
@@ -30,9 +31,10 @@ int main(int argc, char *argv[]) { // NOLINT
     auto infer_method = module.get_method("infer");
 
     Connect4 game_cpu{};
-    auto shape = game_cpu.get_state_shape();
+    Connect4Encoder encoder;
+    auto shape = encoder.state_shape();
     torch::Tensor state_cpu = torch::empty(shape, torch::kFloat32);
-    game_cpu.write_canonical_state(state_cpu.data_ptr<float>());
+    encoder.write_canonical_state(game_cpu, state_cpu.data_ptr<float>());
 
     std::vector<int> batch_sizes = {1,   2,    4,    8,    16,      32,      64,      128,    256,
                                     512, 1024, 2048, 4096, 1 << 13, 1 << 14, 1 << 15, 1 << 16};

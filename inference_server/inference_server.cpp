@@ -14,7 +14,7 @@ int run_server(const InferenceServerArgs &args) {
     std::shared_ptr<ModelWrapper> wrapper;
     if (args.game == "chess") {
         wrapper = create_chess_model_wrapper(args.network_path, args.device, args.mcts_search_depth,
-                                             args.mcts_batch_size);
+                                             args.mcts_batch_size, args.chess_encoder_history);
     } else {
         wrapper = create_connect4_model_wrapper(args.network_path, args.device,
                                                 args.mcts_search_depth, args.mcts_batch_size);

@@ -3,7 +3,11 @@
 #include "replay_buffer.hpp"
 #include <c10/core/Device.h>
 #include <game/chess.hpp>
+#include <game/chess_encoder.hpp>
+#include <game/chess_encoder_v2history.hpp>
 #include <game/connect4.hpp>
+#include <game/connect4_encoder.hpp>
+#include <game/state_encoder.hpp>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <torch/extension.h>
@@ -24,7 +28,15 @@ PYBIND11_MODULE(engine_bind, m) {
             .def_readwrite("reward", &Transition::reward);
 
         py::class_<ReplayBuffer::CachedSampler>(m, "CachedSampler")
-            .def("sample", &ReplayBuffer::CachedSampler::sample)
+            // Release the GIL for the C++ body: sample() touches only
+            // C++/ATen state (buffer, dense-policy cache, all under the
+            // ReplayBuffer's own mutex) and never calls back into Python, so a
+            // background prefetch thread (see AlphaZeroTrainer.train) can run
+            // the CPU-side gather/densify while the main thread keeps launching
+            // GPU kernels. pybind re-acquires the GIL to convert the returned
+            // tensors. Safe as long as one thread samples at a time.
+            .def("sample", &ReplayBuffer::CachedSampler::sample,
+                 py::call_guard<py::gil_scoped_release>())
             .def("close", &ReplayBuffer::CachedSampler::close)
             // Context-manager protocol: `with buf.get_sampler() as s: ...`
             // guarantees close() runs at the block boundary rather than
@@ -44,6 +56,10 @@ PYBIND11_MODULE(engine_bind, m) {
                  py::arg("max_cache_entries") = 4096)
             .def("add", &ReplayBuffer::add)
             .def("get_size", &ReplayBuffer::get_size)
+            .def("save", &ReplayBuffer::save, py::arg("path"),
+                 py::call_guard<py::gil_scoped_release>())
+            .def("load", &ReplayBuffer::load, py::arg("path"),
+                 py::call_guard<py::gil_scoped_release>())
             .def("get_sampler", &ReplayBuffer::get_sampler);
 
         py::class_<Game, std::shared_ptr<Game>>(m, "Game")
@@ -86,6 +102,27 @@ PYBIND11_MODULE(engine_bind, m) {
             .def_readonly_static("action_dim", &Chess::action_dim)
             .def_property_readonly_static("state_dim",
                                           [](py::object /* self */) { return Chess::state_dim; });
+
+        // Encoders: chosen at runtime and passed as an object to self_play()
+        // (training/self_play.hpp's optional `encoder` arg) or constructed for
+        // standalone use (e.g. sizing a network's input_channels from
+        // state_shape() before training starts). StateEncoder itself has no
+        // constructor exposed - only concrete encoders are instantiable.
+        py::class_<StateEncoder, std::shared_ptr<StateEncoder>>(m, "StateEncoder")
+            .def("state_shape", &StateEncoder::state_shape);
+
+        py::class_<ChessEncoderV1, StateEncoder, std::shared_ptr<ChessEncoderV1>>(m,
+                                                                                  "ChessEncoderV1")
+            .def(py::init<>());
+
+        py::class_<ChessEncoderV2History, StateEncoder, std::shared_ptr<ChessEncoderV2History>>(
+            m, "ChessEncoderV2History")
+            .def(py::init<int>(), py::arg("history") = 4)
+            .def_property_readonly("history", &ChessEncoderV2History::history);
+
+        py::class_<Connect4Encoder, StateEncoder, std::shared_ptr<Connect4Encoder>>(
+            m, "Connect4Encoder")
+            .def(py::init<>());
 
         py::class_<MCTS>(m, "MCTS")
             .def(py::init<std::string, torch::Device, float, float, float, float>(),

@@ -1,11 +1,13 @@
 #include "model_wrapper.hpp"
 
 #include <chess.hpp>
+#include <chess_encoder_v2history.hpp>
 #include <chrono>
 #include <connect4.hpp>
 #include <mcts.hpp>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+#include <state_encoder.hpp>
 #include <torch/torch.h>
 #include <utility>
 
@@ -62,9 +64,20 @@ class ChessModelWrapper final : public ModelWrapper {
     int batch_size;
 
   public:
+    // chess_encoder_history: 0 => default 19-plane ChessEncoderV1 (unchanged
+    // behavior); N in {1,4,8} => ChessEncoderV2History(N) so a history-encoder
+    // net is fed its own input (e.g. puzzle-testing the chess-v2 history net).
     ChessModelWrapper(std::string network_path, std::string device, int search_depth,
-                      int batch_size)
-        : device(torch::Device(std::move(device))), mcts(std::move(network_path), this->device),
+                      int batch_size, int chess_encoder_history)
+        : device(torch::Device(std::move(device))),
+          mcts(std::move(network_path), this->device, 1.25f, 19652.0f, 0.25f, 0.3f,
+               default_arena_size_in_bytes, 0.0f,
+               [chess_encoder_history]() -> std::shared_ptr<StateEncoder> {
+                   if (chess_encoder_history > 0) {
+                       return std::make_shared<ChessEncoderV2History>(chess_encoder_history);
+                   }
+                   return nullptr;
+               }()),
           search_depth(search_depth), batch_size(batch_size) {}
 
     std::string encode_payload(const std::vector<float> &policy, float value) override {
@@ -119,8 +132,8 @@ std::shared_ptr<ModelWrapper> create_connect4_model_wrapper(const std::string &n
 
 std::shared_ptr<ModelWrapper> create_chess_model_wrapper(const std::string &network_path,
                                                          const std::string &device,
-                                                         int mcts_search_depth,
-                                                         int mcts_batch_size) {
+                                                         int mcts_search_depth, int mcts_batch_size,
+                                                         int chess_encoder_history) {
     return std::make_shared<ChessModelWrapper>(network_path, device, mcts_search_depth,
-                                               mcts_batch_size);
+                                               mcts_batch_size, chess_encoder_history);
 }

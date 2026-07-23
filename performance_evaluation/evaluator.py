@@ -97,6 +97,15 @@ def main():
         "--mcts-search-depth", type=int, default=800, help="MCTS search depth"
     )
     parser.add_argument(
+        "--chess-encoder-history",
+        type=int,
+        default=0,
+        choices=[0, 1, 4, 8],
+        help="Chess only: input encoding the network expects. 0 (default) = "
+        "19-plane ChessEncoderV1; 1/4/8 = ChessEncoderV2History(N). Set 4 to "
+        "evaluate the chess-v2 history-encoder net.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -125,6 +134,8 @@ def main():
             args.game,
         ]
     )
+    if args.chess_encoder_history:
+        cmd.extend(["--chess-encoder-history", str(args.chess_encoder_history)])
 
     results = []
     print(f"Starting inference server: {' '.join(cmd)}")

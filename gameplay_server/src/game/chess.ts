@@ -111,6 +111,15 @@ export class ChessBoard implements Game {
     return this.chess.turn() === 'w' ? 0 : 1;
   }
 
+  /**
+   * Public decoding of an engine action index into a from/to(/promotion) move,
+   * for callers (e.g. the terminal UI) that drive their own chess.js instance
+   * and only need the mapping, not this board's state.
+   */
+  decodeMove(action: number): { from: string; to: string; promotion?: string } {
+    return this.decodeAction(action);
+  }
+
   is_terminal(): boolean {
     return this.chess.isGameOver();
   }

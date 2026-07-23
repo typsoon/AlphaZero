@@ -94,6 +94,24 @@ class ReplayBuffer {
 
     size_t get_size() const;
 
+    // Persist the buffer's live transitions to `path` as a torch archive so a
+    // later run can reload them instead of refilling from empty self-play (the
+    // ~15-20 min ramp seen on every restart). Only the `size` valid entries are
+    // written; ring-buffer order is irrelevant since sampling is uniform. The
+    // sparse policy targets are packed CSR-style (one concatenated index/value
+    // tensor plus a per-transition length tensor) to avoid a variable-length
+    // list. The COMPATIBILITY GUARD (encoder tag / action_size / state shape)
+    // lives in the Python caller: this method blindly serializes whatever is in
+    // the buffer, and load() blindly trusts the file, so callers MUST validate
+    // metadata before load()-ing (see python/__main__.py). action_size and the
+    // state shape are recorded here too, so a defensive check is possible.
+    void save(const std::string &path) const;
+
+    // Reconstruct transitions from a save() archive and add() them. Appends to
+    // whatever is already buffered (normally called once on a fresh buffer).
+    // No shape/action validation - the caller owns that (see save()).
+    void load(const std::string &path);
+
     // RAII handle onto one span of repeated sampling. Reusing one handle
     // across many sample() calls is fine memory-wise regardless of how many
     // - dense_policy_cache is LRU-bounded at max_cache_entries independently

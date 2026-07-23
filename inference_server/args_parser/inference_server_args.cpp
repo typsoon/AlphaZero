@@ -80,6 +80,8 @@ void print_inference_server_usage(const char *program_name) {
               << "  --socket <path>         Unix socket path (default: "
                  "/tmp/alphazero-inference-AZ123/<game>/<network_name>/<uuid>.sock)\n"
               << "  --mcts-search-depth <depth> MCTS search depth (default: 800)\n"
+              << "  --chess-encoder-history <N> Chess only: 0 (default) = 19-plane "
+                 "ChessEncoderV1; 1/4/8 = ChessEncoderV2History(N) for a history-encoder net\n"
               << "  -h, --help              Show this help message\n";
 }
 
@@ -123,6 +125,21 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
                 args.mcts_batch_size = std::stoi(batch_str);
             } catch (const std::exception &) {
                 error = "Invalid value for --mcts-batch-size: " + batch_str;
+                return false;
+            }
+            continue;
+        }
+        std::string enc_hist_str;
+        if (read_option_value(i, argc, argv, arg, "--chess-encoder-history", enc_hist_str, error)) {
+            try {
+                args.chess_encoder_history = std::stoi(enc_hist_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --chess-encoder-history: " + enc_hist_str;
+                return false;
+            }
+            if (args.chess_encoder_history != 0 && args.chess_encoder_history != 1 &&
+                args.chess_encoder_history != 4 && args.chess_encoder_history != 8) {
+                error = "--chess-encoder-history must be 0 (default 19-plane), 1, 4, or 8";
                 return false;
             }
             continue;

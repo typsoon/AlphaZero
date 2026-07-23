@@ -1,6 +1,7 @@
 #include "CppUTest/CommandLineTestRunner.h"
 #include "CppUTest/MemoryLeakWarningPlugin.h"
 #include "game/chess.hpp"
+#include "game/chess_encoder.hpp"
 #include <algorithm>
 #include <spdlog/spdlog.h>
 #include <utility>
@@ -154,6 +155,76 @@ TEST(ChessTests, Promotion) {
     CHECK_EQUAL(W_QUEEN, game.get_board_state()[0][0]);
 }
 
+// Regression test for a real cache-poisoning bug hit during chess training:
+// write_canonical_state()'s en-passant plane used to mark the EP column
+// whenever en_passant was set, even long after the capture right expired
+// (en_passant/en_passant_move are never reset once set). Two positions
+// identical except for EP *freshness* then produced the same canonical tensor
+// while having different legal actions, breaking the inference transposition
+// cache's core assumption (identical tensor => identical legal actions - see
+// inference_cache.hpp) and letting cached results inject illegal EP captures
+// into MCTS. The plane must be set exactly while the EP capture is timely -
+// the same gate move_rules_P/p apply.
+TEST(ChessTests, EnPassantPlaneOnlyMarkedWhileCaptureIsTimely) {
+    spdlog::info("Testing en-passant plane timeliness...");
+    Chess game;
+    ChessEncoderV1 encoder;
+    std::vector<float> tensor(19 * 8 * 8);
+
+    // 1. d2-d4: EP on column 3 is live for black's reply.
+    game.step(Chess::encode_action({6, 3, 4, 3, 0}));
+    encoder.write_canonical_state(game, tensor.data());
+    for (int i = 0; i < 8; ++i)
+        for (int j = 0; j < 8; ++j)
+            CHECK_EQUAL(j == 3 ? 1.0f : 0.0f, tensor[18 * 64 + i * 8 + j]);
+
+    // 1... a7-a6: black declined; the EP right expired, so the plane must be
+    // all zeros again even though the en_passant member still holds column 3.
+    game.step(Chess::encode_action({1, 0, 2, 0, 0}));
+    encoder.write_canonical_state(game, tensor.data());
+    for (int k = 0; k < 64; ++k)
+        CHECK_EQUAL(0.0f, tensor[18 * 64 + k]);
+}
+
+// Regression test for a real "BAD ACTION INDEX" CUDA gather() crash hit during
+// training. move_rules_P()/move_rules_p()'s diagonal-capture reads used to have
+// no bound on the pawn's own rank: a pawn already sitting on its own promotion
+// rank (row 0 for white, row 7 for black - it should always have promoted the
+// move it got there, see move_piece()'s r2==0/r2==7 handling, so this can't
+// happen through legal play) made those reads go one row past the board
+// (board_state[-1] for white / board_state[8] for black), fabricating a
+// phantom capture whose out-of-range destination is what corrupted an encoded
+// action index (see the i==0/i==7 guards' comments in chess.cpp for the full
+// mechanism). This constructs that unreachable-via-play state directly via
+// set_custom_state() to exercise the guard; built with
+// -DALPHAZERO_BUILD_ASAN_CHESS_TEST=ON, ASan turns the out-of-bounds read this
+// guards against into a hard failure instead of silent UB.
+TEST(ChessTests, PawnStuckOnPromotionRankDoesNotReadOutOfBounds) {
+    spdlog::info("Testing pawn stuck on its own promotion rank...");
+    Chess game;
+    auto b = game.get_board_state();
+    for (auto &row : b)
+        row.fill(EMPTY);
+    b[0][4] = B_KING;
+    b[7][4] = W_KING;
+    b[7][3] = B_PAWN; // illegal: black pawn already on its own promotion rank
+    b[0][3] = W_PAWN; // illegal: white pawn already on its own promotion rank
+
+    game.set_custom_state(b, 1); // black to move
+    auto black_actions = game.get_legal_actions();
+    for (int act : black_actions) {
+        ChessAction ca = Chess::decode_action(act);
+        CHECK_FALSE(ca.r1 == 7 && ca.c1 == 3); // stuck pawn must generate no moves
+    }
+
+    game.set_custom_state(b, 0); // white to move
+    auto white_actions = game.get_legal_actions();
+    for (int act : white_actions) {
+        ChessAction ca = Chess::decode_action(act);
+        CHECK_FALSE(ca.r1 == 0 && ca.c1 == 3); // stuck pawn must generate no moves
+    }
+}
+
 TEST(ChessTests, Checkmate) {
     spdlog::info("Testing checkmate...");
     Chess game;
@@ -188,8 +259,9 @@ TEST(ChessTests, Stalemate) {
 TEST(ChessTests, CanonicalState) {
     spdlog::info("Testing canonical state...");
     Chess game;
+    ChessEncoderV1 encoder;
     float buffer[19 * 64];
-    game.write_canonical_state(buffer); // NOLINT
+    encoder.write_canonical_state(game, buffer); // NOLINT
 
     for (int i = 0; i < 64; ++i) {
         CHECK_EQUAL(1.0f, buffer[(12 * 64) + i]); // NOLINT
@@ -199,7 +271,7 @@ TEST(ChessTests, CanonicalState) {
 
     auto board = game.get_board_state();
     game.set_custom_state(board, 1);
-    game.write_canonical_state(buffer); // NOLINT
+    encoder.write_canonical_state(game, buffer); // NOLINT
 
     for (int i = 0; i < 64; ++i) {
         CHECK_EQUAL(0.0f, buffer[12 * 64 + i]);

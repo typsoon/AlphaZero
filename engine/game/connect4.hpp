@@ -11,6 +11,10 @@
 using std::vector;
 
 class Connect4 : public Game2D<6, 7> {
+    // Reads Connect4's private board + side to move to build the input tensor,
+    // kept out of the game class so alternative encodings need no changes here.
+    friend class Connect4Encoder;
+
   public:
     static constexpr int action_dim = COLS;
     static constexpr auto state_dim = std::make_tuple(1, ROWS, COLS);
@@ -35,8 +39,6 @@ class Connect4 : public Game2D<6, 7> {
     float reward() const override;
     board_t get_board_state() const override;
     std::shared_ptr<const GameState> get_canonical_state() const override;
-    std::vector<int64_t> get_state_shape() const override;
-    void write_canonical_state(float *out_buffer) const override;
     std::shared_ptr<Game> clone() const override;
     void render() const override;
 
@@ -46,10 +48,12 @@ class Connect4 : public Game2D<6, 7> {
     bool checkWin(int row, int col) const;
     bool checkDirection(int row, int col, int dRow, int dCol) const;
 
-    board_t board;
+    // 4-byte members first, then the align-1 board array, then the bool - avoids
+    // the padding a board/int/bool/float declaration order would otherwise incur.
     int currentPlayer;
-    bool finished;
     float _reward;
+    board_t board;
+    bool finished;
 };
 
 #endif // CONNECT_4_HPP

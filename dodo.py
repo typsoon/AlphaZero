@@ -351,6 +351,8 @@ def task_test_cpp():
     test_chess = BUILD_DIR / "engine" / "test_chess"
     test_mcts = BUILD_DIR / "engine" / "test_mcts"
     test_replay_buffer = BUILD_DIR / "engine" / "test_replay_buffer"
+    test_inference_cache = BUILD_DIR / "engine" / "test_inference_cache"
+    test_resignation = BUILD_DIR / "engine" / "test_resignation"
     return {
         "actions": [
             with_report(f"{test_bin}"),
@@ -361,6 +363,8 @@ def task_test_cpp():
             # needed (a CUDA-driver-init/CppUTest leak-detector interaction crashes
             # the binary otherwise, unrelated to ReplayBuffer's own correctness).
             with_report(f'CUDA_VISIBLE_DEVICES="" {test_replay_buffer}'),
+            with_report(f"{test_inference_cache}"),
+            with_report(f"{test_resignation}"),
         ],
         "task_dep": ["build"],
     }
@@ -416,7 +420,7 @@ def task_test_performance():
     """Run performance evaluation and generate the HTML report."""
     inference_bin = BUILD_DIR / "inference_server" / "inference_server"
 
-    def run_evaluator(network_path, mcts_search_depth, game):
+    def run_evaluator(network_path, mcts_search_depth, game, chess_encoder_history):
         network_path = resolve_network_path(network_path, game)
         cmd = (
             f"{sys.executable} -m performance_evaluation.evaluator "
@@ -424,6 +428,8 @@ def task_test_performance():
         )
         if mcts_search_depth is not None:
             cmd += f" --mcts-search-depth {mcts_search_depth}"
+        if chess_encoder_history:
+            cmd += f" --chess-encoder-history {chess_encoder_history}"
         return run_protected(cmd)
 
     return {
@@ -448,8 +454,172 @@ def task_test_performance():
                 "help": "The game to run puzzle evaluation for",
                 "choices": SUPPORTED_GAMES,
             },
+            {
+                "name": "chess_encoder_history",
+                "long": "chess_encoder_history",
+                "type": int,
+                "default": 0,
+                "help": "Chess only: input encoding the net expects. 0 = "
+                "19-plane default; 1/4/8 = ChessEncoderV2History(N). Use 4 for "
+                "the chess-v2 history bootstrap net.",
+            },
         ],
         "task_dep": ["build"],
+    }
+
+
+def task_run_arena():
+    """Play head-to-head arena matches between two checkpoints and report the score."""
+    from dodo_profile import _merge_params_file
+
+    arena_bin = BUILD_DIR / "engine" / "profiling" / "run_arena"
+
+    def run_arena(
+        game,
+        network_path_a,
+        network_path_b,
+        num_games,
+        thread_count,
+        max_moves,
+        mcts_num_simulations,
+        mcts_batch_size,
+        use_gumbel_search,
+        max_num_considered_actions,
+        transposition_cache_entries,
+        params_file,
+    ):
+        p = _merge_params_file(params_file, locals())
+        game = p["game"]
+        network_path_a = p["network_path_a"]
+        network_path_b = p["network_path_b"]
+        num_games = p["num_games"]
+        thread_count = p["thread_count"]
+        max_moves = p["max_moves"]
+        mcts_num_simulations = p["mcts_num_simulations"]
+        mcts_batch_size = p["mcts_batch_size"]
+        use_gumbel_search = p["use_gumbel_search"]
+        max_num_considered_actions = p["max_num_considered_actions"]
+        transposition_cache_entries = p["transposition_cache_entries"]
+
+        # A defaults to the current (latest) checkpoint via the same resolution
+        # test_performance uses; B defaults to the newest archive in
+        # checkpoints/<game>/old_checkpoint (the 2-hourly milestone snapshots),
+        # so a bare `doit run_arena --game chess` answers "did the last two
+        # hours of training make the network stronger?".
+        network_path_a = resolve_network_path(network_path_a, game)
+        if not network_path_b:
+            archive_dir = PROJ_ROOT / "checkpoints" / game / "old_checkpoint"
+            candidates = sorted(archive_dir.glob("*.pt_trt")) or sorted(
+                archive_dir.glob("*.pt_scripted")
+            )
+            if not candidates:
+                raise ValueError(
+                    f"network_path_b not given and no archived checkpoints found in "
+                    f"{archive_dir} - pass --network_path_b or populate the archive"
+                )
+            network_path_b = candidates[-1]
+
+        cmd = (
+            f"{arena_bin} {game} {network_path_a} {network_path_b} {num_games} "
+            f"{thread_count} {max_moves} {mcts_num_simulations} {mcts_batch_size} "
+            f"{int(use_gumbel_search)} {max_num_considered_actions} "
+            f"{transposition_cache_entries}"
+        )
+        return run_protected(cmd)
+
+    return {
+        "actions": [
+            f"cmake --build {BUILD_DIR} --target run_arena -j$(nproc)",
+            run_arena,
+        ],
+        "params": [
+            {
+                "name": "game",
+                "long": "game",
+                "type": str,
+                "default": "chess",
+                "help": "The game to play the arena match in",
+                "choices": SUPPORTED_GAMES,
+            },
+            {
+                "name": "network_path_a",
+                "long": "network_path_a",
+                "type": str,
+                "default": "",
+                "help": "Engine A's checkpoint (default: current latest)",
+            },
+            {
+                "name": "network_path_b",
+                "long": "network_path_b",
+                "type": str,
+                "default": "",
+                "help": "Engine B's checkpoint (default: newest old_checkpoint archive)",
+            },
+            {
+                "name": "num_games",
+                "long": "num_games",
+                "type": int,
+                "default": 40,
+                "help": "Number of games (colors alternate every game)",
+            },
+            {
+                "name": "thread_count",
+                "long": "thread_count",
+                "type": int,
+                "default": 8,
+                "help": "Concurrent games (one MCTS pair + arenas per thread)",
+            },
+            {
+                "name": "max_moves",
+                "long": "max_moves",
+                "type": int,
+                "default": 512,
+                "help": "Ply cutoff per game (cutoff games score as draws)",
+            },
+            {
+                "name": "mcts_num_simulations",
+                "long": "mcts_num_simulations",
+                "type": int,
+                "default": 800,
+                "help": "Simulations per move for both engines",
+            },
+            {
+                "name": "mcts_batch_size",
+                "long": "mcts_batch_size",
+                "type": int,
+                "default": 64,
+                "help": "MCTS inference batch size",
+            },
+            {
+                "name": "use_gumbel_search",
+                "long": "use_gumbel_search",
+                "type": int,
+                "default": 1,
+                "help": "1 = Gumbel root selection (recommended for arenas), 0 = plain PUCT",
+            },
+            {
+                "name": "max_num_considered_actions",
+                "long": "max_num_considered_actions",
+                "type": int,
+                "default": 16,
+                "help": "Gumbel-Top-k candidate set size",
+            },
+            {
+                "name": "transposition_cache_entries",
+                "long": "transposition_cache_entries",
+                "type": int,
+                "default": 1000000,
+                "help": "Per-engine inference cache slots (0 disables)",
+            },
+            {
+                "name": "params_file",
+                "long": "params_file",
+                "type": str,
+                "default": "",
+                "help": "JSON file with any of the above keys (CLI flags win)",
+            },
+        ],
+        "task_dep": ["setup_vcpkg", "patch_torchtrt"],
     }
 
 

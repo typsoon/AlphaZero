@@ -12,6 +12,37 @@ from python.utils import (
 OUT_DIR = PROJ_ROOT / "out"
 _MKDIR_OUT_DIR = f"mkdir -p {OUT_DIR}"
 
+# Maps JSON training-param field names that differ from doit param names.
+_JSON_FIELD_MAP = {
+    "mcts_simulations": "mcts_num_simulations",
+    "fast_mcts_simulations": "fast_mcts_num_simulations",
+    "initial_network": "network_path",
+    "games_in_each_iteration": "num_games",
+}
+
+
+def _merge_params_file(params_file: str, params: dict) -> dict:
+    """Load a training-params JSON and merge it into *params*, returning a new dict.
+
+    CLI flags always win over the file; the file only fills in values that were
+    not explicitly overridden on the command line (i.e. still at their doit default).
+    Unknown JSON keys are silently ignored so the full training JSON can be passed
+    without needing to strip training-only fields first.
+    """
+    if not params_file:
+        return params
+    import json
+
+    with open(params_file) as f:
+        data = json.load(f)
+
+    merged = dict(params)
+    for key, value in data.items():
+        param_name = _JSON_FIELD_MAP.get(key, key)
+        if param_name in merged:
+            merged[param_name] = value
+    return merged
+
 
 def _get_profile_params(default_num_games: int, default_thread_count: int) -> list:
     return [
@@ -60,6 +91,52 @@ def _get_profile_params(default_num_games: int, default_thread_count: int) -> li
             "default": 32,
             "help": "Batch size used within MCTS::search for leaf evaluation",
         },
+        {
+            "name": "fast_mcts_num_simulations",
+            "long": "fast_mcts_num_simulations",
+            "type": int,
+            "default": 100,
+            "help": "Playout-cap-randomization 'fast' search simulation count "
+            "(see full_search_probability)",
+        },
+        {
+            "name": "full_search_probability",
+            "long": "full_search_probability",
+            "type": float,
+            "default": 0.25,
+            "help": "Probability a move uses the full mcts_num_simulations search "
+            "instead of the cheaper fast_mcts_num_simulations one",
+        },
+        {
+            "name": "use_gumbel_search",
+            "long": "use_gumbel_search",
+            "type": bool,
+            "default": False,
+            "help": "Use MCTS::search_gumbel() (Gumbel-Top-k + sequential halving) "
+            "instead of the default Dirichlet-noised PUCT search",
+        },
+        {
+            "name": "max_num_considered_actions",
+            "long": "max_num_considered_actions",
+            "type": int,
+            "default": 16,
+            "help": "Gumbel search only: full search's Gumbel-Top-k candidate-set size (m)",
+        },
+        {
+            "name": "transposition_cache_entries",
+            "long": "transposition_cache_entries",
+            "type": int,
+            "default": 1_000_000,
+            "help": "Self-play NN-inference transposition cache slot count. 0 disables it",
+        },
+        {
+            "name": "params_file",
+            "long": "params_file",
+            "type": str,
+            "default": "",
+            "help": "Path to a training-params JSON (e.g. training_params/chess_params_gumbell.json). "
+            "Values from the file are used as defaults; explicit CLI flags still override them.",
+        },
     ]
 
 
@@ -75,14 +152,35 @@ def task_profile_self_play_cachegrind():
         max_moves,
         mcts_num_simulations,
         mcts_batch_size,
+        fast_mcts_num_simulations,
+        full_search_probability,
+        use_gumbel_search,
+        max_num_considered_actions,
+        transposition_cache_entries,
+        params_file,
     ):
+        p = _merge_params_file(params_file, locals())
+        game = p["game"]
+        network_path = p["network_path"]
+        num_games = p["num_games"]
+        thread_count = p["thread_count"]
+        max_moves = p["max_moves"]
+        mcts_num_simulations = p["mcts_num_simulations"]
+        mcts_batch_size = p["mcts_batch_size"]
+        fast_mcts_num_simulations = p["fast_mcts_num_simulations"]
+        full_search_probability = p["full_search_probability"]
+        use_gumbel_search = p["use_gumbel_search"]
+        max_num_considered_actions = p["max_num_considered_actions"]
+        transposition_cache_entries = p["transposition_cache_entries"]
         network_path = resolve_network_path(network_path, game)
         # Empty "" is the kineto_out placeholder (skips kineto profiling) so the
         # positional mcts_num_simulations/mcts_batch_size args can still be reached.
         cmd = (
             f"valgrind --tool=cachegrind --cachegrind-out-file={OUT_DIR}/cachegrind.out "
             f'{profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves} "" '
-            f"{mcts_num_simulations} {mcts_batch_size}"
+            f"{mcts_num_simulations} {mcts_batch_size} {fast_mcts_num_simulations} "
+            f"{full_search_probability} {int(use_gumbel_search)} {max_num_considered_actions} "
+            f"{transposition_cache_entries}"
         )
         return run_protected(cmd)
 
@@ -125,7 +223,26 @@ def task_profile_self_play_perf():
         max_moves,
         mcts_num_simulations,
         mcts_batch_size,
+        fast_mcts_num_simulations,
+        full_search_probability,
+        use_gumbel_search,
+        max_num_considered_actions,
+        transposition_cache_entries,
+        params_file,
     ):
+        p = _merge_params_file(params_file, locals())
+        game = p["game"]
+        network_path = p["network_path"]
+        num_games = p["num_games"]
+        thread_count = p["thread_count"]
+        max_moves = p["max_moves"]
+        mcts_num_simulations = p["mcts_num_simulations"]
+        mcts_batch_size = p["mcts_batch_size"]
+        fast_mcts_num_simulations = p["fast_mcts_num_simulations"]
+        full_search_probability = p["full_search_probability"]
+        use_gumbel_search = p["use_gumbel_search"]
+        max_num_considered_actions = p["max_num_considered_actions"]
+        transposition_cache_entries = p["transposition_cache_entries"]
         network_path = resolve_network_path(network_path, game)
         # --call-graph dwarf is used instead of -g (frame-pointer) because
         # libtorch's optimized kernels are often built without frame pointers,
@@ -135,7 +252,9 @@ def task_profile_self_play_perf():
         cmd = (
             f"perf record -e {_perf_cycles_event()} --call-graph dwarf "
             f"-o {OUT_DIR}/perf.data {profiling_bin} {game} {network_path} {num_games} "
-            f'{thread_count} {max_moves} "" {mcts_num_simulations} {mcts_batch_size}'
+            f'{thread_count} {max_moves} "" {mcts_num_simulations} {mcts_batch_size} '
+            f"{fast_mcts_num_simulations} {full_search_probability} {int(use_gumbel_search)} "
+            f"{max_num_considered_actions} {transposition_cache_entries}"
         )
         return run_protected(cmd)
 
@@ -163,12 +282,34 @@ def task_profile_self_play_kineto():
         max_moves,
         mcts_num_simulations,
         mcts_batch_size,
+        fast_mcts_num_simulations,
+        full_search_probability,
+        use_gumbel_search,
+        max_num_considered_actions,
+        transposition_cache_entries,
+        params_file,
     ):
+        p = _merge_params_file(params_file, locals())
+        game = p["game"]
+        network_path = p["network_path"]
+        num_games = p["num_games"]
+        thread_count = p["thread_count"]
+        max_moves = p["max_moves"]
+        mcts_num_simulations = p["mcts_num_simulations"]
+        mcts_batch_size = p["mcts_batch_size"]
+        fast_mcts_num_simulations = p["fast_mcts_num_simulations"]
+        full_search_probability = p["full_search_probability"]
+        use_gumbel_search = p["use_gumbel_search"]
+        max_num_considered_actions = p["max_num_considered_actions"]
+        transposition_cache_entries = p["transposition_cache_entries"]
         network_path = resolve_network_path(network_path, game)
         out_file = OUT_DIR / "pytorch_profile.json"
         cmd = (
             f"{profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves} "
-            f"{out_file} {mcts_num_simulations} {mcts_batch_size}"
+            f"{out_file} {mcts_num_simulations} {mcts_batch_size} "
+            f"{fast_mcts_num_simulations} {full_search_probability} "
+            f"{int(use_gumbel_search)} {max_num_considered_actions} "
+            f"{transposition_cache_entries}"
         )
         return run_protected(cmd)
 
@@ -196,7 +337,26 @@ def task_profile_self_play_nsys():
         max_moves,
         mcts_num_simulations,
         mcts_batch_size,
+        fast_mcts_num_simulations,
+        full_search_probability,
+        use_gumbel_search,
+        max_num_considered_actions,
+        transposition_cache_entries,
+        params_file,
     ):
+        p = _merge_params_file(params_file, locals())
+        game = p["game"]
+        network_path = p["network_path"]
+        num_games = p["num_games"]
+        thread_count = p["thread_count"]
+        max_moves = p["max_moves"]
+        mcts_num_simulations = p["mcts_num_simulations"]
+        mcts_batch_size = p["mcts_batch_size"]
+        fast_mcts_num_simulations = p["fast_mcts_num_simulations"]
+        full_search_probability = p["full_search_probability"]
+        use_gumbel_search = p["use_gumbel_search"]
+        max_num_considered_actions = p["max_num_considered_actions"]
+        transposition_cache_entries = p["transposition_cache_entries"]
         network_path = resolve_network_path(network_path, game)
         # --cudabacktrace=memory:1000000 captures a CPU backtrace for any CUDA memory
         # API call (memcpy/memset) that takes over 1ms, so slow calls can be traced
@@ -207,7 +367,10 @@ def task_profile_self_play_nsys():
         cmd = (
             "nsys profile --cudabacktrace=memory:1000000 --force-overwrite=true "
             f"-o {OUT_DIR}/nsys_capture {profiling_bin} {game} {network_path} {num_games} "
-            f'{thread_count} {max_moves} "" {mcts_num_simulations} {mcts_batch_size}'
+            f'{thread_count} {max_moves} "" {mcts_num_simulations} {mcts_batch_size} '
+            f"{fast_mcts_num_simulations} {full_search_probability} "
+            f"{int(use_gumbel_search)} {max_num_considered_actions} "
+            f"{transposition_cache_entries}"
         )
         return run_protected(cmd)
 
@@ -262,29 +425,70 @@ def _get_train_profile_params(default_training_iterations: int) -> list:
             "default": 4096,
             "help": "Training minibatch size",
         },
+        {
+            "name": "network_arch",
+            "long": "network_arch",
+            "type": str,
+            "default": "legacy",
+            "choices": ("legacy", "chess_v2"),
+            "help": "Network architecture to profile. Use 'chess_v2' to profile "
+            "the live history-encoder bootstrap net; 'legacy' (default) keeps "
+            "the original behavior.",
+        },
+        {
+            "name": "chess_encoder_history",
+            "long": "chess_encoder_history",
+            "type": str,
+            "default": "",
+            "help": "chess_v2 only: history length N in {1,4,8} for the "
+            "63-plane ChessEncoderV2History input (empty = 19-plane default). "
+            "Sizes both the net and the synthetic states. For the live run: 4.",
+        },
     ]
 
 
 def _profile_train_cmd(
-    game, replay_size, training_iterations, batch_size, minibatch_size
+    game,
+    replay_size,
+    training_iterations,
+    batch_size,
+    minibatch_size,
+    network_arch="legacy",
+    chess_encoder_history="",
 ):
-    return (
+    cmd = (
         f"{sys.executable} -m python.tools.profile_train --game {game} "
         f"--replay-size {replay_size} --training-iterations {training_iterations} "
-        f"--batch-size {batch_size} --minibatch-size {minibatch_size}"
+        f"--batch-size {batch_size} --minibatch-size {minibatch_size} "
+        f"--network-arch {network_arch}"
     )
+    if chess_encoder_history != "":
+        cmd += f" --chess-encoder-history {chess_encoder_history}"
+    return cmd
 
 
 def task_profile_train_cachegrind():
     """Run a profiler on AlphaZeroTrainer.train() (no self-play) using cachegrind."""
 
     def run_cachegrind(
-        game, replay_size, training_iterations, batch_size, minibatch_size
+        game,
+        replay_size,
+        training_iterations,
+        batch_size,
+        minibatch_size,
+        network_arch,
+        chess_encoder_history,
     ):
         cmd = (
             f"valgrind --tool=cachegrind --cachegrind-out-file={OUT_DIR}/cachegrind_train.out "
             + _profile_train_cmd(
-                game, replay_size, training_iterations, batch_size, minibatch_size
+                game,
+                replay_size,
+                training_iterations,
+                batch_size,
+                minibatch_size,
+                network_arch,
+                chess_encoder_history,
             )
         )
         return run_protected(cmd)
@@ -303,12 +507,26 @@ def task_profile_train_cachegrind():
 def task_profile_train_perf():
     """Run a profiler on AlphaZeroTrainer.train() (no self-play) using Linux perf."""
 
-    def run_perf(game, replay_size, training_iterations, batch_size, minibatch_size):
+    def run_perf(
+        game,
+        replay_size,
+        training_iterations,
+        batch_size,
+        minibatch_size,
+        network_arch,
+        chess_encoder_history,
+    ):
         cmd = (
             f"perf record -e {_perf_cycles_event()} --call-graph dwarf "
             f"-o {OUT_DIR}/perf_train.data "
             + _profile_train_cmd(
-                game, replay_size, training_iterations, batch_size, minibatch_size
+                game,
+                replay_size,
+                training_iterations,
+                batch_size,
+                minibatch_size,
+                network_arch,
+                chess_encoder_history,
             )
         )
         return run_protected(cmd)
@@ -327,11 +545,25 @@ def task_profile_train_perf():
 def task_profile_train_kineto():
     """Run a profiler on AlphaZeroTrainer.train() (no self-play) using PyTorch Kineto."""
 
-    def run_kineto(game, replay_size, training_iterations, batch_size, minibatch_size):
+    def run_kineto(
+        game,
+        replay_size,
+        training_iterations,
+        batch_size,
+        minibatch_size,
+        network_arch,
+        chess_encoder_history,
+    ):
         out_file = OUT_DIR / "pytorch_train_profile.json"
         cmd = (
             _profile_train_cmd(
-                game, replay_size, training_iterations, batch_size, minibatch_size
+                game,
+                replay_size,
+                training_iterations,
+                batch_size,
+                minibatch_size,
+                network_arch,
+                chess_encoder_history,
             )
             + f" --kineto-out {out_file}"
         )
@@ -352,12 +584,24 @@ def task_profile_train_cprofile():
     """Run a Python-level profiler on AlphaZeroTrainer.train() (no self-play) using cProfile."""
 
     def run_cprofile(
-        game, replay_size, training_iterations, batch_size, minibatch_size
+        game,
+        replay_size,
+        training_iterations,
+        batch_size,
+        minibatch_size,
+        network_arch,
+        chess_encoder_history,
     ):
         out_file = OUT_DIR / "train_cprofile.prof"
         cmd = (
             _profile_train_cmd(
-                game, replay_size, training_iterations, batch_size, minibatch_size
+                game,
+                replay_size,
+                training_iterations,
+                batch_size,
+                minibatch_size,
+                network_arch,
+                chess_encoder_history,
             )
             + f" --cprofile-out {out_file}"
         )
@@ -378,12 +622,26 @@ def task_profile_train_cprofile():
 def task_profile_train_nsys():
     """Run a profiler on AlphaZeroTrainer.train() (no self-play) using Nsight Systems (nsys)."""
 
-    def run_nsys(game, replay_size, training_iterations, batch_size, minibatch_size):
+    def run_nsys(
+        game,
+        replay_size,
+        training_iterations,
+        batch_size,
+        minibatch_size,
+        network_arch,
+        chess_encoder_history,
+    ):
         cmd = (
             "nsys profile --cudabacktrace=memory:1000000 --force-overwrite=true "
             f"-o {OUT_DIR}/nsys_train_capture "
             + _profile_train_cmd(
-                game, replay_size, training_iterations, batch_size, minibatch_size
+                game,
+                replay_size,
+                training_iterations,
+                batch_size,
+                minibatch_size,
+                network_arch,
+                chess_encoder_history,
             )
         )
         return run_protected(cmd)

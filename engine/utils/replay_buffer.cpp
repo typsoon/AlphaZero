@@ -1,6 +1,8 @@
 #include "replay_buffer.hpp"
 #include <algorithm>
 #include <numeric>
+#include <stdexcept>
+#include <string>
 
 Transition::Transition(torch::Tensor s, torch::Tensor idx, torch::Tensor val, float r)
     : state(std::move(s)), policy_indices(std::move(idx)), policy_values(std::move(val)),
@@ -61,6 +63,91 @@ void ReplayBuffer::add(const std::vector<Transition> &transitions) { // NOLINT
 size_t ReplayBuffer::get_size() const {
     std::shared_lock<std::shared_mutex> lock(rw_mutex);
     return size;
+}
+
+void ReplayBuffer::save(const std::string &path) const {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    auto n = static_cast<int64_t>(size);
+
+    torch::Tensor states, rewards, idx_all, val_all, lengths;
+    if (n == 0 || !states_buffer.defined()) {
+        states = torch::empty({0});
+        rewards = torch::empty({0}, torch::kFloat32);
+        idx_all = torch::empty({0}, torch::kInt64);
+        val_all = torch::empty({0}, torch::kFloat32);
+        lengths = torch::empty({0}, torch::kInt64);
+    } else {
+        // Valid entries always occupy slots [0, size): while size < capacity the
+        // ring hasn't wrapped, and once full n == capacity covers every slot.
+        // clone() detaches from the live buffers so concurrent add()s can't
+        // mutate what we're serializing after the lock is released.
+        states = states_buffer.narrow(0, 0, n).clone();
+        rewards = rewards_buffer.narrow(0, 0, n).clone();
+        std::vector<torch::Tensor> idx_parts, val_parts;
+        idx_parts.reserve(n);
+        val_parts.reserve(n);
+        std::vector<int64_t> lens(n);
+        for (int64_t i = 0; i < n; ++i) {
+            const Transition &t = buffer[i];
+            idx_parts.push_back(t.policy_indices);
+            val_parts.push_back(t.policy_values);
+            lens[i] = t.policy_indices.numel();
+        }
+        idx_all = idx_parts.empty() ? torch::empty({0}, torch::kInt64)
+                                    : torch::cat(idx_parts).to(torch::kInt64).clone();
+        val_all = val_parts.empty() ? torch::empty({0}, torch::kFloat32)
+                                    : torch::cat(val_parts).to(torch::kFloat32).clone();
+        lengths = torch::tensor(lens, torch::kInt64);
+    }
+    // Trailing metadata tensor lets a reader defensively cross-check even
+    // without the Python sidecar: {action_size, num_transitions}.
+    torch::Tensor meta = torch::tensor({action_size, n}, torch::kInt64);
+    std::vector<torch::Tensor> archive{states, rewards, idx_all, val_all, lengths, meta};
+    torch::save(archive, path);
+}
+
+void ReplayBuffer::load(const std::string &path) {
+    std::vector<torch::Tensor> archive;
+    torch::load(archive, path);
+    if (archive.size() < 5) {
+        throw std::runtime_error("ReplayBuffer::load: malformed archive (expected >=5 "
+                                 "tensors) in '" +
+                                 path + "'");
+    }
+    const torch::Tensor &states = archive[0];
+    const torch::Tensor &rewards = archive[1];
+    const torch::Tensor &idx_all = archive[2];
+    const torch::Tensor &val_all = archive[3];
+    const torch::Tensor &lengths = archive[4];
+
+    auto n = static_cast<int64_t>(lengths.numel());
+    if (n == 0) {
+        return;
+    }
+    if (archive.size() >= 6) {
+        auto loaded_action_size = archive[5].accessor<int64_t, 1>()[0];
+        if (loaded_action_size != action_size) {
+            throw std::runtime_error(
+                "ReplayBuffer::load: action_size mismatch (archive " +
+                std::to_string(loaded_action_size) + " vs buffer " +
+                std::to_string(action_size) + ") in '" + path +
+                "'; the saved policy targets index a different action space");
+        }
+    }
+
+    auto rewards_a = rewards.accessor<float, 1>();
+    auto lengths_a = lengths.accessor<int64_t, 1>();
+    std::vector<Transition> transitions;
+    transitions.reserve(n);
+    int64_t off = 0;
+    for (int64_t i = 0; i < n; ++i) {
+        int64_t len = lengths_a[i];
+        // narrow() bounds-checks: a corrupt lengths/idx mismatch throws here.
+        transitions.emplace_back(states[i], idx_all.narrow(0, off, len),
+                                 val_all.narrow(0, off, len), rewards_a[i]);
+        off += len;
+    }
+    add(transitions);
 }
 
 void ReplayBuffer::clear_dense_cache() const {

@@ -3,7 +3,11 @@
 .vscode
 __pycache__
 build/
+build_asan/
+build_tsan/
 
+**.log
+**log.jsonl
 *.pt
 *.npz
 **/node_modules
@@ -14,6 +18,7 @@ vcpkg/
 .ruff_cache/
 .cache/
 checkpoints/
+checkpoints_hist/
 old_checkpoints/
 runs/
 compile_commands.json

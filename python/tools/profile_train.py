@@ -28,6 +28,25 @@ def get_args():
     )
     parser.add_argument("--game", type=str, default="connect4", choices=list(GAMES))
     parser.add_argument(
+        "--network-arch",
+        type=str,
+        default="legacy",
+        choices=["legacy", "chess_v2"],
+        help="Architecture of the profiled network - match the run you care "
+        "about (the live history-encoder bootstrap is 'chess_v2'). Default "
+        "'legacy' keeps the original behavior.",
+    )
+    parser.add_argument(
+        "--chess-encoder-history",
+        type=int,
+        default=None,
+        choices=[1, 4, 8],
+        help="chess_v2 only: profile the ChessEncoderV2History(N) input "
+        "(14*N+7 planes) instead of the 19-plane default. Sizes both the "
+        "network and the synthetic states so the profiled forward/backward "
+        "matches the real training workload.",
+    )
+    parser.add_argument(
         "--replay-size",
         type=int,
         default=8192,
@@ -59,11 +78,14 @@ def get_args():
     return parser.parse_args()
 
 
-def make_synthetic_transitions(game_type, count, max_policy_entries=32):
+def make_synthetic_transitions(game_type, count, max_policy_entries=32, state_dim=None):
     """Builds transitions with random states/policies/rewards - real MCTS/self-play
     values aren't needed since only AlphaZeroTrainer.train()'s compute (sampling,
-    forward/backward, optimizer step) is being profiled here."""
-    state_dim = game_type.state_dim
+    forward/backward, optimizer step) is being profiled here. state_dim overrides
+    game_type.state_dim so a non-default input encoding (e.g. the 63-plane
+    ChessEncoderV2History) is profiled at its real channel count."""
+    if state_dim is None:
+        state_dim = game_type.state_dim
     action_dim = game_type.action_dim
     num_policy_entries = min(max_policy_entries, action_dim)
 
@@ -84,11 +106,28 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     game_type = GAMES[args.game]
 
-    network = get_network(game_type).to(device)
+    network = get_network(
+        game_type,
+        network_arch=args.network_arch,
+        chess_encoder_history=args.chess_encoder_history,
+    ).to(device)
+    # Match the synthetic states to what the network actually consumes: the
+    # encoder's channel count, not game_type.state_dim (which is the fixed
+    # 19-plane default and would mismatch a history-encoder net).
+    if args.chess_encoder_history is not None:
+        from python.pybind.engine_bind import ChessEncoderV2History  # pyright: ignore
+
+        state_dim = tuple(
+            ChessEncoderV2History(args.chess_encoder_history).state_shape()
+        )
+    else:
+        state_dim = game_type.state_dim
     replay_buffer = ReplayBuffer(
         args.replay_size, game_type.action_dim, max_cache_entries=args.minibatch_size
     )
-    replay_buffer.add(make_synthetic_transitions(game_type, args.replay_size))
+    replay_buffer.add(
+        make_synthetic_transitions(game_type, args.replay_size, state_dim=state_dim)
+    )
 
     trainer = get_trainer(network, device, replay_buffer, args.minibatch_size)
 

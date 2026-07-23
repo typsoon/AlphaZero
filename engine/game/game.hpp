@@ -11,8 +11,11 @@ using torch::Tensor;
 class GameState {
   public:
     virtual ~GameState() = default;
-    virtual void write_canonical_state(float *out_buffer) const = 0;
-    virtual std::vector<int64_t> get_state_shape() const = 0;
+
+    // The neural-network input encoding of a position no longer lives here: it
+    // is owned by StateEncoder (engine/game/state_encoder.hpp), so a game can
+    // support multiple encodings without changing its rules class. The encoder
+    // reads a GameState& (always the concrete Game) and writes the tensor.
 
     // Return a list of legal action indices for this state. Declared here (rather
     // than only on Game) so the inference layer can compute legal actions itself

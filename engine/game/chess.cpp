@@ -1,7 +1,9 @@
 // Original source: https://github.com/geochri/AlphaZero_Chess/blob/master/src/chess_board.py
 #include "chess.hpp"
 #include "bitboard.hpp"
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <random>
 
@@ -120,6 +122,7 @@ void Chess::reset() {
     position_history.clear();
     position_history.push_back(compute_position_hash());
     repetition_count = 1;
+    history_count = 0;
 }
 
 bool Chess::is_white(int8_t p) {
@@ -164,6 +167,35 @@ std::vector<int> Chess::get_legal_actions() const {
 }
 
 void Chess::step(int action) {
+    // TEMP DIAGNOSTIC (env-gated, zero-cost when unset): verify every stepped
+    // action is actually legal in this position, to catch the source of the
+    // illegal moves behind the move_rules_P/p "pawn already on promotion rank"
+    // guard storms and the glibc heap-corruption aborts seen in training. Dumps
+    // the full position + the offending action, then aborts so a debugger/core
+    // shows the caller.
+    static const bool verify_legality = std::getenv("ALPHAZERO_VERIFY_STEP_LEGALITY") != nullptr;
+    if (verify_legality) {
+        auto legal = get_legal_actions();
+        if (std::find(legal.begin(), legal.end(), action) == legal.end()) {
+            ChessAction<> bad = decode_action(action);
+            std::string board_dump;
+            for (int r = 0; r < 8; ++r) {
+                for (int c = 0; c < 8; ++c)
+                    board_dump += std::to_string((int)current_board[r][c]) + " ";
+                board_dump += "| ";
+            }
+            std::string legal_dump;
+            for (int la : legal)
+                legal_dump += std::to_string(la) + " ";
+            spdlog::critical("ILLEGAL STEP: action={} (r1={} c1={} r2={} c2={} promo={}) player={} "
+                             "move_count={} en_passant={} en_passant_move={} halfmove_clock={} "
+                             "board=[{}] legal_actions=[{}]",
+                             action, (int)bad.r1, (int)bad.c1, (int)bad.r2, (int)bad.c2,
+                             (int)bad.promotion, (int)player, move_count, (int)en_passant,
+                             en_passant_move, halfmove_clock, board_dump, legal_dump);
+            std::abort();
+        }
+    }
     ChessAction<> a = decode_action(action);
     int promo = (player == 0) ? W_QUEEN : B_QUEEN;
     switch (a.promotion) {
@@ -206,6 +238,7 @@ void Chess::set_custom_state(const board_t &board, int8_t active_player, int8_t 
     position_history.clear();
     position_history.push_back(compute_position_hash());
     repetition_count = 1;
+    history_count = 0;
 }
 
 bool Chess::is_terminal() const {
@@ -305,44 +338,9 @@ Chess::board_t Chess::get_board_state() const {
     return current_board;
 }
 
-void Chess::write_canonical_state(float *out_buffer) const {
-    std::fill(out_buffer, out_buffer + 19 * 64, 0.0f); // NOLINT
-
-    bool p1_k_castle = (player == 0) ? (k_move_count == 0 && r2_move_count == 0)
-                                     : (K_move_count == 0 && R2_move_count == 0);
-    bool p1_q_castle = (player == 0) ? (k_move_count == 0 && r1_move_count == 0)
-                                     : (K_move_count == 0 && R1_move_count == 0);
-    bool p2_k_castle = (player == 0) ? (K_move_count == 0 && R2_move_count == 0)
-                                     : (k_move_count == 0 && r2_move_count == 0);
-    bool p2_q_castle = (player == 0) ? (K_move_count == 0 && R1_move_count == 0)
-                                     : (k_move_count == 0 && r1_move_count == 0);
-
-    for (int i = 0; i < 8; ++i) {
-        for (int j = 0; j < 8; ++j) {
-            int r = (player == 0) ? i : (7 - i);
-            auto p = current_board[r][j];
-
-            if (p != EMPTY) {
-                bool is_p1_piece = (player == 0 && p > 0) || (player == 1 && p < 0);
-                int plane = (is_p1_piece ? 0 : 6) + std::abs(p) - 1;
-                out_buffer[plane * 64 + i * 8 + j] = 1.0f;
-            }
-
-            out_buffer[12 * 64 + i * 8 + j] = (player == 0) ? 1.0f : 0.0f;
-            out_buffer[13 * 64 + i * 8 + j] = static_cast<float>(move_count);
-            out_buffer[14 * 64 + i * 8 + j] = p1_k_castle ? 1.0f : 0.0f;
-            out_buffer[15 * 64 + i * 8 + j] = p1_q_castle ? 1.0f : 0.0f;
-            out_buffer[16 * 64 + i * 8 + j] = p2_k_castle ? 1.0f : 0.0f;
-            out_buffer[17 * 64 + i * 8 + j] = p2_q_castle ? 1.0f : 0.0f;
-            out_buffer[18 * 64 + i * 8 + j] = (en_passant != -1 && en_passant == j) ? 1.0f : 0.0f;
-        }
-    }
-}
-
-// TODO: utilize state_dim
-std::vector<int64_t> Chess::get_state_shape() const {
-    return {19, 8, 8};
-}
+// The neural-network input encoding used to live here (write_canonical_state /
+// get_state_shape); it has moved to ChessEncoderV1 (engine/game/chess_encoder.cpp),
+// which reads this class's position via friendship. See engine/game/state_encoder.hpp.
 
 void Chess::move_rules_P(int8_t i, int8_t j, PosList &moves) const {
     const auto &board_state = current_board;
@@ -360,6 +358,22 @@ void Chess::move_rules_P(int8_t i, int8_t j, PosList &moves) const {
     }
     if ((i == 1 || i == 2 || i == 3 || i == 4 || i == 5) && board_state[i - 1][j] == EMPTY)
         moves.emplace_back(i - 1, j);
+    // Guard board_state[i - 1][...] below against i == 0: a white pawn should
+    // never actually be sitting on row 0 (it must have promoted into a
+    // different piece the move it got there - see move_piece()'s promotion
+    // handling), but if that invariant is ever violated for any reason, this
+    // would otherwise silently read board_state[-1] - i.e. current_board[-1],
+    // which wraps to an enormous out-of-bounds std::array index (UB, not
+    // caught by anything at this optimization level). Logged once since this
+    // is only ever expected to fire on a genuine bug upstream, not in normal
+    // operation - see the identical guard's comment in move_rules_p() below
+    // for the (already-confirmed-reachable) black-side mirror of this.
+    if (i == 0) {
+        spdlog::error("move_rules_P called with a white pawn already on row 0 (should have "
+                      "promoted) - skipping its diagonal-capture generation to avoid an "
+                      "out-of-bounds board_state[-1] read");
+        return;
+    }
     if (j == 0 && is_black(board_state[i - 1][j + 1])) {
         moves.emplace_back(i - 1, j + 1);
     } else if (j == 7 && is_black(board_state[i - 1][j - 1])) {
@@ -388,6 +402,30 @@ void Chess::move_rules_p(int8_t i, int8_t j, PosList &moves) const {
     }
     if ((i == 2 || i == 3 || i == 4 || i == 5 || i == 6) && board_state[i + 1][j] == EMPTY)
         moves.emplace_back(i + 1, j);
+    // Guard board_state[i + 1][...] below against i == 7: unlike the forward-push
+    // check above (explicitly restricted to i in [2,6]), these diagonal-capture
+    // reads had no bound on i at all - if a black pawn is ever found on row 7
+    // (it should always have promoted into a different piece the move it got
+    // there; see move_piece()'s promotion handling), board_state[i + 1] =
+    // board_state[8] silently reads 8 bytes of whatever memory follows
+    // current_board (board_t is this class's last member - see its declaration)
+    // instead of being caught by any bounds check, since std::array::operator[]
+    // performs none. That stray read can pass is_white()/is_black() by chance,
+    // fabricating a move to a nonexistent row-8 square - encode_action() then
+    // has no way to detect that square is invalid (its formula assumes r1/r2/c1/
+    // c2 are already in [0,7]), producing an action index that decodes back to a
+    // *different*, coincidentally in-range-looking (from, to) pair entirely -
+    // this was confirmed as the root cause of a rare "BAD ACTION INDEX"
+    // CUDA gather() crash during real training (see execute_tensor_batch() in
+    // engine/inference/basic_infer.cpp), traced here via a temporary
+    // RAW BAD CHESSACTION diagnostic that caught exactly board_state[8]'s
+    // fingerprint (r2=8) at its source.
+    if (i == 7) {
+        spdlog::error("move_rules_p called with a black pawn already on row 7 (should have "
+                      "promoted) - skipping its diagonal-capture generation to avoid an "
+                      "out-of-bounds board_state[8] read");
+        return;
+    }
     if (j == 0 && is_white(board_state[i + 1][j + 1])) {
         moves.emplace_back(i + 1, j + 1);
     } else if (j == 7 && is_white(board_state[i + 1][j - 1])) {
@@ -744,6 +782,22 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
     bool is_capture = current_board[r2][c2] != EMPTY ||
                       (moved_pawn && std::abs(c1 - c2) == 1 && current_board[r2][c2] == EMPTY);
 
+    // Push the PRE-move position into the history-stacked-encoder window (see
+    // history_boards' comment in chess.hpp) before anything below mutates
+    // current_board. repetition_count - 1 converts "occurrences including
+    // itself" (this class's existing FIDE-facing counter) to "occurrences
+    // before this one" (what the encoder wants), matching engine-zoo's
+    // current_repetitions_before semantics; clamped to [0,2] since that's all
+    // the encoder's two repetition-flag planes distinguish.
+    for (int i = kMaxHistoryFrames - 1; i > 0; --i) {
+        history_boards[i] = history_boards[i - 1];
+        history_repetitions_before[i] = history_repetitions_before[i - 1];
+    }
+    history_boards[0] = current_board;
+    history_repetitions_before[0] =
+        static_cast<int8_t>(std::min(2, std::max(0, repetition_count - 1)));
+    history_count = std::min(history_count + 1, kMaxHistoryFrames);
+
     if (player == 0) {
         auto promoted = false;
         auto piece = current_board[r1][c1];
@@ -940,7 +994,7 @@ ActionList<> Chess::actions(bool stop_early) const {
                                         c1 = cc;
                                     }
                         }
-                        auto copy = current_board;
+                        auto copy = b.current_board;
                         copy[f.first][f.second] = p;
                         copy[r1][c1] = 0;
 
@@ -956,11 +1010,11 @@ ActionList<> Chess::actions(bool stop_early) const {
                         }
                         // Handle En Passant
                         if (p == W_PAWN && c1 != f.second &&
-                            current_board[f.first][f.second] == 0) {
+                            b.current_board[f.first][f.second] == 0) {
                             copy[r1][f.second] = 0;
                         }
 
-                        if (!bitboard::is_attacked(player, copy)) {
+                        if (!bitboard::is_attacked(b.player, copy)) {
                             if (p == W_PAWN && f.first == 0) {
                                 actss.emplace_back(r1, c1, f.first, f.second, 1);
                                 actss.emplace_back(r1, c1, f.first, f.second, 2);
@@ -1019,7 +1073,7 @@ ActionList<> Chess::actions(bool stop_early) const {
                                         c1 = cc;
                                     }
                         }
-                        auto copy = current_board;
+                        auto copy = b.current_board;
                         copy[f.first][f.second] = p;
                         copy[r1][c1] = 0;
 
@@ -1035,11 +1089,11 @@ ActionList<> Chess::actions(bool stop_early) const {
                         }
                         // Handle En Passant
                         if (p == B_PAWN && c1 != f.second &&
-                            current_board[f.first][f.second] == 0) {
+                            b.current_board[f.first][f.second] == 0) {
                             copy[r1][f.second] = 0;
                         }
 
-                        if (!bitboard::is_attacked(player, copy)) {
+                        if (!bitboard::is_attacked(b.player, copy)) {
                             if (p == B_PAWN && f.first == 7) {
                                 actss.emplace_back(r1, c1, f.first, f.second, 1);
                                 actss.emplace_back(r1, c1, f.first, f.second, 2);

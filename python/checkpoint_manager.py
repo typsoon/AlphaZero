@@ -11,10 +11,23 @@ class CheckpointManager:
     tensorrt_dir_name = "tensorrt"
     scripted_dir_name = "scripted"
 
-    def __init__(self, network_name_stem, checkpoint_dir: Path, max_checkpoints):
+    def __init__(
+        self, network_name_stem, checkpoint_dir: Path, max_checkpoints, tensorrt_every=1
+    ):
         self.checkpoint_count = 0
         self.max_checkpoints = max_checkpoints
         assert self.max_checkpoints > 0, "Max checkpoints must be greater than 0"
+        # Compile a TensorRT engine only every `tensorrt_every` checkpoints (0 =
+        # never). The .pt (weights) and .pt_scripted (TorchScript) engines are
+        # always written - they are cheap and the scripted one is a usable
+        # inference fallback. TRT compilation, by contrast, costs tens of seconds
+        # per checkpoint and is pure waste during a frozen-generator bootstrap,
+        # where self-play runs off the FROZEN generator's engine and nothing
+        # consumes the trainee's TRT until it takes over generation (phase B).
+        # Set 0 for such a bootstrap (arena/eval can use the scripted engine),
+        # 1 for normal self-improvement where self-play needs the freshest TRT.
+        self.tensorrt_every = tensorrt_every
+        self._trt_counter = 0
 
         self.checkpoint_dir = checkpoint_dir
         self.scripted_dir = checkpoint_dir / self.scripted_dir_name
@@ -64,8 +77,14 @@ class CheckpointManager:
         network.save_az_network(self.checkpoint_name_fmstr % 0)
         network.script_and_save_network(self.scripted_name_fmstr % 0)
 
-        if torch.cuda.is_available():
+        self._trt_counter += 1
+        compile_trt = self.tensorrt_every > 0 and (
+            self._trt_counter % self.tensorrt_every == 0
+        )
+        if torch.cuda.is_available() and compile_trt:
             try:
+                # Free PyTorch cached memory so TensorRT has enough VRAM to compile
+                torch.cuda.empty_cache()
                 network.tensorrt_and_save_network(self.tensorrt_name_fmstr % 0)
             except Exception as e:
                 print(f"Failed to compile TensorRT engine: {e}")

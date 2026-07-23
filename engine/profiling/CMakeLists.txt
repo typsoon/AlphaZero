@@ -9,6 +9,15 @@ target_include_directories(run_self_play
 target_compile_options(run_self_play PRIVATE -fopenmp)
 target_link_options(run_self_play PRIVATE -fopenmp)
 
+add_executable(run_arena EXCLUDE_FROM_ALL run_arena.cpp)
+
+target_link_libraries(run_arena PRIVATE engine spdlog::spdlog
+                                        "${TORCH_LIBRARIES}")
+target_include_directories(run_arena PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+
+target_compile_options(run_arena PRIVATE -fopenmp)
+target_link_options(run_arena PRIVATE -fopenmp)
+
 add_executable(benchmark_policy EXCLUDE_FROM_ALL benchmark_policy.cpp)
 target_link_libraries(benchmark_policy PRIVATE spdlog::spdlog
                                                "${TORCH_LIBRARIES}")

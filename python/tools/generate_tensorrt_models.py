@@ -19,6 +19,16 @@ def main():
         help="Max first dim of input (max TensorRT batch size). Defaults to "
         "AlphaZeroNetwork.tensorrt_and_save_network's own default if not set.",
     )
+    parser.add_argument(
+        "--opt_first_dim",
+        type=int,
+        default=None,
+        help="Optimization-point first dim of input (the batch size TensorRT "
+        "actually tunes kernel selection for) - should match the real median "
+        "DynamicBatcher batch size on the deployment machine, not an arbitrary "
+        "value. Defaults to AlphaZeroNetwork.tensorrt_and_save_network's own "
+        "default if not set.",
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -68,12 +78,12 @@ def main():
                         Path(trt_path).name,
                     )
                     try:
+                        kwargs = {}
                         if args.max_first_dim is not None:
-                            network.tensorrt_and_save_network(
-                                trt_path, args.max_first_dim
-                            )
-                        else:
-                            network.tensorrt_and_save_network(trt_path)
+                            kwargs["max_first_dim_of_input"] = args.max_first_dim
+                        if args.opt_first_dim is not None:
+                            kwargs["opt_first_dim_of_input"] = args.opt_first_dim
+                        network.tensorrt_and_save_network(trt_path, **kwargs)
                     except Exception as e:
                         logger.error(
                             "    Failed to compile TRT engine: %s",

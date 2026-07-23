@@ -80,6 +80,28 @@ TEST(MCTSTests, ForcedMateGetsMostVisitsUnderUniformPrior) {
     CHECK_TRUE(pi[mate_action] > 0.5f);
 }
 
+// First-play-urgency changes how unvisited children are scored in the PUCT
+// exploitation term (parent value minus fpu_reduction instead of the assume-draw
+// 0.0), so it exercises the new branch in Node::UCB. A forced mate must still be
+// found - FPU is an exploration heuristic, not a change to backprop or terminal
+// scoring - and this confirms the branch is wired correctly.
+TEST(MCTSTests, ForcedMateStillFoundWithFpuReduction) {
+    Chess game;
+    game.set_custom_state(smothered_mate_board(), 0); // White to move
+
+    int mate_action = Chess::encode_action({3, 4, 1, 5, 0}); // e5-f7
+
+    MCTS mcts(std::make_unique<UniformInferer>(), 1.25f, 19652.0f, /*eps=*/0.25f, 0.3f,
+              default_arena_size_in_bytes, /*fpu_reduction=*/0.1f);
+    auto [pi, root_value] = mcts.search(game, /*num_simulations=*/400, /*batch_size=*/1);
+    (void)root_value;
+
+    int argmax =
+        static_cast<int>(std::distance(pi.begin(), std::max_element(pi.begin(), pi.end())));
+    CHECK_EQUAL(mate_action, argmax);
+    CHECK_TRUE(pi[mate_action] > 0.5f);
+}
+
 // Same board, but Black to move: White's Nf7# threat is still sitting there for
 // White's *next* move, so Black must find a reply that neutralizes it (e.g. guarding
 // f7, or otherwise removing the threat) or lose. This exercises backpropagation two
@@ -438,6 +460,100 @@ TEST(MCTSBatchSizeTests, SequentialSearchConcentratesAtLeastAsWellAsSingleRoundS
     // simulation count; 1.5x leaves headroom against run-to-run noise while still
     // failing if the batching-degrades-quality mechanism stops holding.
     CHECK_TRUE(sequential_defend_mass > 1.5f * single_round_defend_mass);
+}
+
+TEST_GROUP(MCTSGumbelTests){};
+
+// Gumbel AlphaZero's search_gumbel() analogue of ForcedMateGetsMostVisitsUnderUniformPrior
+// above: with a uniform prior, the only thing that can make the mating move's
+// completedQ (and thus its improved-policy score) stand out is the terminal-node
+// backpropagation search_gumbel() triggers when sequential halving actually
+// simulates that action - exercising the same backprop path through the new
+// root-forcing code instead of search()'s PUCT root selection.
+TEST(MCTSGumbelTests, ForcedMateGetsMostPolicyMassUnderUniformPrior) {
+    Chess game;
+    game.set_custom_state(smothered_mate_board(), 0);        // White to move
+    int mate_action = Chess::encode_action({3, 4, 1, 5, 0}); // e5-f7
+
+    MCTS mcts(std::make_unique<UniformInferer>());
+    auto [pi, root_value, chosen_action] =
+        mcts.search_gumbel(game, /*num_simulations=*/400, /*batch_size=*/1);
+    (void)root_value;
+
+    int argmax =
+        static_cast<int>(std::distance(pi.begin(), std::max_element(pi.begin(), pi.end())));
+
+    CHECK_EQUAL(mate_action, argmax);
+    CHECK_TRUE(pi[mate_action] > 0.5f);
+    // The sequential-halving winner is the action the paper says to actually
+    // play - with a forced mate on the board it must be the mating move, no
+    // matter which Gumbel draws seeded the candidate set.
+    CHECK_EQUAL(mate_action, chosen_action);
+}
+
+// General regression coverage mirroring PolicyIsNormalizedOverLegalActionsOnly: the
+// improved policy target search_gumbel() returns must stay a normalized
+// distribution supported only on legal actions, regardless of which candidate
+// subset sequential halving actually simulated.
+TEST(MCTSGumbelTests, PolicyIsNormalizedOverLegalActionsOnly) {
+    Chess game; // standard starting position
+    auto legal = game.get_legal_actions();
+    std::vector<bool> is_legal(game.getActionSize(), false);
+    for (int act : legal)
+        is_legal[act] = true;
+
+    MCTS mcts(std::make_unique<UniformInferer>());
+    auto [pi, root_value, chosen_action] =
+        mcts.search_gumbel(game, /*num_simulations=*/200, /*batch_size=*/8,
+                           /*max_num_considered_actions=*/8);
+    (void)root_value;
+
+    // The chosen action must itself be legal, whatever the noise draws were.
+    CHECK_TRUE(is_legal[chosen_action]);
+
+    CHECK_EQUAL(static_cast<size_t>(game.getActionSize()), pi.size());
+
+    float sum = 0.0f;
+    for (size_t a = 0; a < pi.size(); ++a) {
+        CHECK_TRUE(pi[a] >= 0.0f);
+        if (!is_legal[a]) {
+            CHECK_EQUAL(0.0f, pi[a]);
+        }
+        sum += pi[a];
+    }
+    DOUBLES_EQUAL(1.0, sum, 1e-4);
+}
+
+// A position with exactly one legal move should short-circuit straight to a
+// one-hot policy without attempting to run sequential halving on a single-element
+// candidate set (log2(1) = 0 phases - this guards that edge case doesn't crash or
+// return an all-zero/garbage policy instead).
+//
+// White Ka1 is in check from Black's Ra8 along the a-file with no blocker
+// available; a2 and b2 are also covered (a2 by the rook itself, b2 by Black's
+// Bc3 on the same a1-h8 diagonal), leaving b1 as White's only legal move.
+TEST(MCTSGumbelTests, SingleLegalMoveReturnsOneHotPolicyWithoutSearching) {
+    Chess::board_t b;
+    for (auto &row : b)
+        row.fill(EMPTY);
+    b[7][0] = W_KING;   // a1
+    b[0][0] = B_ROOK;   // a8
+    b[5][2] = B_BISHOP; // c3
+    b[0][7] = B_KING;   // h8
+
+    Chess game;
+    game.set_custom_state(b, 0); // White to move
+
+    auto legal = game.get_legal_actions();
+    CHECK_EQUAL(1u, legal.size());
+
+    MCTS mcts(std::make_unique<UniformInferer>());
+    auto [pi, root_value, chosen_action] =
+        mcts.search_gumbel(game, /*num_simulations=*/100, /*batch_size=*/1);
+    (void)root_value;
+
+    CHECK_EQUAL(1.0f, pi[legal[0]]);
+    CHECK_EQUAL(legal[0], chosen_action);
 }
 
 int main(int ac, char **av) {
