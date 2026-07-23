@@ -6,3 +6,4 @@ platformdirs
 patchelf
 chess
 tensorboard
+torchvision

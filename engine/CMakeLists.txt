@@ -64,6 +64,12 @@ if(BUILD_TESTS)
   target_compile_definitions(test_inference_cache
                              PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
 
+  add_executable(test_dual_inferer tests/test_dual_inferer.cpp)
+  target_link_libraries(test_dual_inferer PRIVATE engine CppUTest
+                                                  "${TORCH_LIBRARIES}")
+  target_compile_definitions(test_dual_inferer
+                             PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
+
   add_executable(test_resignation tests/test_resignation.cpp)
   target_link_libraries(test_resignation PRIVATE engine CppUTest)
   target_compile_definitions(test_resignation
@@ -118,10 +124,9 @@ endif()
 # with the main build's flags. Compiles the encoder, Chess history hook, and the
 # DynamicBatcher pipeline directly so ASan instruments every write into the
 # encoder's output buffers.
-option(
-  ALPHAZERO_BUILD_ASAN_STRESS_TEST
-  "Build the standalone AddressSanitizer ChessEncoderV2History self-play stress test"
-  OFF)
+option(ALPHAZERO_BUILD_ASAN_STRESS_TEST
+       "Build the standalone AddressSanitizer ChessEncoderV2History stress test"
+       OFF)
 if(ALPHAZERO_BUILD_ASAN_STRESS_TEST)
   add_executable(
     test_selfplay_stress_asan

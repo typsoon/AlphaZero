@@ -52,7 +52,11 @@ def main():
     m1_mean = mean(m1_vals)
     # Calibration gap: how far the value head separates won from lost positions.
     # Grows toward +2.0 as the head calibrates; ~0 means it can't tell them apart.
-    gap = (win_mean - lose_mean) if (win_mean is not None and lose_mean is not None) else None
+    gap = (
+        (win_mean - lose_mean)
+        if (win_mean is not None and lose_mean is not None)
+        else None
+    )
 
     rec = {
         "time": datetime.now().strftime("%F %T"),

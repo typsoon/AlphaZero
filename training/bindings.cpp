@@ -18,7 +18,9 @@ PYBIND11_MODULE(self_play_bind, m) {
           py::arg("resignation_threshold") = -0.95f, py::arg("resignation_consecutive_moves") = 3,
           py::arg("resignation_min_ply") = 60, py::arg("resignation_disable_probability") = 0.1f,
           py::arg("fpu_reduction") = 0.0f, py::arg("encoder") = std::shared_ptr<StateEncoder>(),
-          py::arg("self_play_encoder") = std::shared_ptr<StateEncoder>());
+          py::arg("self_play_encoder") = std::shared_ptr<StateEncoder>(),
+          py::arg("value_network_path") = std::string(""),
+          py::arg("value_network_encoder") = std::shared_ptr<StateEncoder>());
 
     m.def("self_play_connect4", &self_play, py::arg("game"), py::arg("network_path"),
           py::arg("replay_buf"), py::arg("num_games") = 100, py::arg("thread_count") = 1,
@@ -30,5 +32,7 @@ PYBIND11_MODULE(self_play_bind, m) {
           py::arg("resignation_threshold") = -0.95f, py::arg("resignation_consecutive_moves") = 3,
           py::arg("resignation_min_ply") = 60, py::arg("resignation_disable_probability") = 0.1f,
           py::arg("fpu_reduction") = 0.0f, py::arg("encoder") = std::shared_ptr<StateEncoder>(),
-          py::arg("self_play_encoder") = std::shared_ptr<StateEncoder>());
+          py::arg("self_play_encoder") = std::shared_ptr<StateEncoder>(),
+          py::arg("value_network_path") = std::string(""),
+          py::arg("value_network_encoder") = std::shared_ptr<StateEncoder>());
 }

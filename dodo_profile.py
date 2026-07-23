@@ -130,12 +130,26 @@ def _get_profile_params(default_num_games: int, default_thread_count: int) -> li
             "help": "Self-play NN-inference transposition cache slot count. 0 disables it",
         },
         {
+            "name": "chess_encoder_history",
+            "long": "chess_encoder_history",
+            "type": int,
+            "default": 0,
+            "help": "Length of the state history for the chess encoder (e.g. 4 for historical nets).",
+        },
+        {
             "name": "params_file",
             "long": "params_file",
             "type": str,
             "default": "",
             "help": "Path to a training-params JSON (e.g. training_params/chess_params_gumbell.json). "
             "Values from the file are used as defaults; explicit CLI flags still override them.",
+        },
+        {
+            "name": "value_network_path",
+            "long": "value_network_path",
+            "type": str,
+            "default": "",
+            "help": "Optional second network to evaluate values, separating policy and value inference",
         },
     ]
 
@@ -157,6 +171,8 @@ def task_profile_self_play_cachegrind():
         use_gumbel_search,
         max_num_considered_actions,
         transposition_cache_entries,
+        chess_encoder_history,
+        value_network_path,
         params_file,
     ):
         p = _merge_params_file(params_file, locals())
@@ -172,15 +188,16 @@ def task_profile_self_play_cachegrind():
         use_gumbel_search = p["use_gumbel_search"]
         max_num_considered_actions = p["max_num_considered_actions"]
         transposition_cache_entries = p["transposition_cache_entries"]
-        network_path = resolve_network_path(network_path, game)
-        # Empty "" is the kineto_out placeholder (skips kineto profiling) so the
-        # positional mcts_num_simulations/mcts_batch_size args can still be reached.
+        value_network_path = p.get("value_network_path", "")
+        if value_network_path:
+            value_network_path = resolve_network_path(value_network_path, game)
+
         cmd = (
             f"valgrind --tool=cachegrind --cachegrind-out-file={OUT_DIR}/cachegrind.out "
             f'{profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves} "" '
             f"{mcts_num_simulations} {mcts_batch_size} {fast_mcts_num_simulations} "
             f"{full_search_probability} {int(use_gumbel_search)} {max_num_considered_actions} "
-            f"{transposition_cache_entries}"
+            f"{transposition_cache_entries} {chess_encoder_history} {value_network_path}"
         )
         return run_protected(cmd)
 
@@ -228,6 +245,8 @@ def task_profile_self_play_perf():
         use_gumbel_search,
         max_num_considered_actions,
         transposition_cache_entries,
+        chess_encoder_history,
+        value_network_path,
         params_file,
     ):
         p = _merge_params_file(params_file, locals())
@@ -243,7 +262,18 @@ def task_profile_self_play_perf():
         use_gumbel_search = p["use_gumbel_search"]
         max_num_considered_actions = p["max_num_considered_actions"]
         transposition_cache_entries = p["transposition_cache_entries"]
+        chess_encoder_history = p["chess_encoder_history"]
         network_path = resolve_network_path(network_path, game)
+        value_network_path = p.get("value_network_path", "")
+        if value_network_path:
+            value_network_path = resolve_network_path(value_network_path, game)
+
+        # Profiling only works with TensorRT models, so convert PyTorch .pt paths to .pt_trt
+        if network_path.endswith(".pt"):
+            import os
+
+            dirname, basename = os.path.split(network_path)
+            network_path = os.path.join(dirname, "tensorrt", basename + "_trt")
         # --call-graph dwarf is used instead of -g (frame-pointer) because
         # libtorch's optimized kernels are often built without frame pointers,
         # which otherwise breaks call-graph attribution.
@@ -254,7 +284,8 @@ def task_profile_self_play_perf():
             f"-o {OUT_DIR}/perf.data {profiling_bin} {game} {network_path} {num_games} "
             f'{thread_count} {max_moves} "" {mcts_num_simulations} {mcts_batch_size} '
             f"{fast_mcts_num_simulations} {full_search_probability} {int(use_gumbel_search)} "
-            f"{max_num_considered_actions} {transposition_cache_entries}"
+            f"{max_num_considered_actions} {transposition_cache_entries} {chess_encoder_history} "
+            f"{value_network_path}"
         )
         return run_protected(cmd)
 
@@ -287,6 +318,8 @@ def task_profile_self_play_kineto():
         use_gumbel_search,
         max_num_considered_actions,
         transposition_cache_entries,
+        chess_encoder_history,
+        value_network_path,
         params_file,
     ):
         p = _merge_params_file(params_file, locals())
@@ -302,14 +335,25 @@ def task_profile_self_play_kineto():
         use_gumbel_search = p["use_gumbel_search"]
         max_num_considered_actions = p["max_num_considered_actions"]
         transposition_cache_entries = p["transposition_cache_entries"]
+        chess_encoder_history = p["chess_encoder_history"]
         network_path = resolve_network_path(network_path, game)
+        value_network_path = p.get("value_network_path", "")
+        if value_network_path:
+            value_network_path = resolve_network_path(value_network_path, game)
+
+        # Profiling only works with TensorRT models, so convert PyTorch .pt paths to .pt_trt
+        if network_path.endswith(".pt"):
+            import os
+
+            dirname, basename = os.path.split(network_path)
+            network_path = os.path.join(dirname, "tensorrt", basename + "_trt")
         out_file = OUT_DIR / "pytorch_profile.json"
         cmd = (
             f"{profiling_bin} {game} {network_path} {num_games} {thread_count} {max_moves} "
-            f"{out_file} {mcts_num_simulations} {mcts_batch_size} "
-            f"{fast_mcts_num_simulations} {full_search_probability} "
-            f"{int(use_gumbel_search)} {max_num_considered_actions} "
-            f"{transposition_cache_entries}"
+            f"{OUT_DIR}/pytorch_profile.json {mcts_num_simulations} {mcts_batch_size} "
+            f"{fast_mcts_num_simulations} {full_search_probability} {int(use_gumbel_search)} "
+            f"{max_num_considered_actions} {transposition_cache_entries} {chess_encoder_history} "
+            f"{value_network_path}"
         )
         return run_protected(cmd)
 
@@ -430,7 +474,7 @@ def _get_train_profile_params(default_training_iterations: int) -> list:
             "long": "network_arch",
             "type": str,
             "default": "legacy",
-            "choices": ("legacy", "chess_v2"),
+            "choices": (("legacy", ""), ("chess_v2", "")),
             "help": "Network architecture to profile. Use 'chess_v2' to profile "
             "the live history-encoder bootstrap net; 'legacy' (default) keeps "
             "the original behavior.",

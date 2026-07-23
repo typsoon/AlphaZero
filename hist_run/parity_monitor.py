@@ -22,7 +22,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path("/home/z1201659/AlphaZero/really_newest/AlphaZeroDev")
+ROOT = Path(__file__).resolve().parent.parent
 RUNDIR = ROOT / "hist_run"
 ARENA_BIN = ROOT / "build/engine/profiling/run_arena"
 HIST_TRT = ROOT / "checkpoints_hist/chess/tensorrt/chess_AZNetwork_hist_0.pt_trt"

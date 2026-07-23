@@ -169,9 +169,9 @@ void producer(NetworkInfererFactory &factory, int submits, unsigned seed,
 } // namespace
 
 int main(int argc, char **argv) {
-    int outer_cycles = (argc > 1) ? std::atoi(argv[1]) : 8;
-    int threads = (argc > 2) ? std::atoi(argv[2]) : 8;
-    int submits = (argc > 3) ? std::atoi(argv[3]) : 40;
+    int outer_cycles = (argc > 1) ? std::stoi(argv[1]) : 8;
+    int threads = (argc > 2) ? std::stoi(argv[2]) : 8;
+    int submits = (argc > 3) ? std::stoi(argv[3]) : 40;
 
     constexpr int64_t kActionDim = Chess::action_dim;
     constexpr int kHistory = 4;

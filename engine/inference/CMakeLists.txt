@@ -25,6 +25,7 @@ if(TRT_FOUND EQUAL 0 AND EXISTS "${TRT_LIB_PATH}")
   message(STATUS "Found torch_tensorrt: ${TRT_LIB_PATH}")
   target_link_libraries(inference "${TORCH_LIBRARIES}" "${TRT_LIB_PATH}" game
                         spdlog::spdlog)
+
   target_link_libraries(inference "${CMAKE_DL_LIBS}")
   target_compile_definitions(inference
                              PUBLIC ALPHAZERO_TRT_LIB_PATH="${TRT_LIB_PATH}")

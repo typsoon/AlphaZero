@@ -19,19 +19,21 @@ TEST_GROUP(StateEncoderTests){void setup(){} void teardown(){}};
 // invariants directly, standing in as the ongoing regression guard.
 TEST(StateEncoderTests, ChessEncoderV1SweepInvariants) {
     ChessEncoderV1 encoder;
-    std::mt19937 rng(12345);
-    std::array<float, 19 * 64> tensor{};
+    std::mt19937 rng(12345); // NOLINT
+    std::array<float, 19 * 64ULL> tensor{};
     long positions = 0;
     for (int g = 0; g < 200; ++g) {
         Chess game;
         for (int ply = 0; ply < 240; ++ply) {
-            if (game.is_terminal()) break;
+            if (game.is_terminal())
+                break;
             auto legal = game.get_legal_actions();
-            if (legal.empty()) break;
+            if (legal.empty())
+                break;
 
             encoder.write_canonical_state(game, tensor.data());
             // Side-to-move plane (index 12) is constant 1 or 0 across the board.
-            float stm = tensor[12 * 64];
+            float stm = tensor[12 * 64ULL];
             for (int k = 0; k < 64; ++k)
                 CHECK_EQUAL(stm, tensor[12 * 64 + k]);
             CHECK_TRUE(stm == 0.0f || stm == 1.0f);
@@ -88,4 +90,6 @@ TEST(StateEncoderTests, DefaultEncoderDispatchesOnGameType) {
     CHECK_TRUE(dynamic_cast<Connect4Encoder *>(connect4_encoder.get()) != nullptr);
 }
 
-int main(int ac, char **av) { return CommandLineTestRunner::RunAllTests(ac, av); }
+int main(int ac, char **av) {
+    return CommandLineTestRunner::RunAllTests(ac, av);
+}

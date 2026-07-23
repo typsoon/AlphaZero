@@ -29,7 +29,12 @@ struct StateEncoder;
 // the actual training run). If you raise mcts_num_simulations well past 800,
 // re-derive this: undersizing it means most expansions overflow into the
 // upstream allocator (malloc) instead, which still works but is slower. The
-// arena is fully reset (pool.release()) at the start of every search() call.
+// The arena is fully reset (pool.release()) at the start of every search() call.
+inline size_t calculate_arena_size(size_t action_size, int mcts_num_simulations) {
+    // 8 bytes per child pointer (children array) + ~2KB for Node/valid_actions struct.
+    // 25% safety margin on top.
+    return static_cast<size_t>(mcts_num_simulations * (action_size * 8 + 2048) * 1.25);
+}
 constexpr size_t default_arena_size_in_bytes = static_cast<const size_t>(160 * 1024 * 1024);
 
 class MCTS {

@@ -167,11 +167,14 @@ class AlphaZeroNetwork(nn.Module):
             # inference dominates the loop - a net loss. The torchscript IR
             # produces the tighter/faster TRT engine, so keep it.
             scripted_model = torch.jit.script(self)
+            # Dedicate total VRAM minus a 5GB safety buffer for PyTorch/OS (min 1GB)
+            dyn_workspace = max(1 << 30, torch.cuda.get_device_properties(0).total_memory - (5 << 30))
             trt_model = torch_tensorrt.compile(
                 scripted_model,
                 inputs=inputs,
                 enabled_precisions={torch.float32, torch.float16},
                 ir="torchscript",
+                workspace_size=dyn_workspace,
             )
             trt_model.save(path)
         finally:
@@ -466,6 +469,8 @@ class ChessAzV2Network(nn.Module):
             ]
 
             scripted_model = torch.jit.script(self)
+            # Dedicate total VRAM minus a 5GB safety buffer for PyTorch/OS (min 1GB)
+            dyn_workspace = max(1 << 30, torch.cuda.get_device_properties(0).total_memory - (5 << 30))
             trt_model = torch_tensorrt.compile(
                 scripted_model,
                 inputs=inputs,
@@ -475,6 +480,7 @@ class ChessAzV2Network(nn.Module):
                 # into TRT constants as-is; this truncates them to int32 inside
                 # the engine (safe: slot indices max out at 73*64-1).
                 truncate_long_and_double=True,
+                workspace_size=dyn_workspace,
             )
             trt_model.save(path)
         finally:

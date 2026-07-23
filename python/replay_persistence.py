@@ -28,7 +28,9 @@ from typing import Optional, Sequence
 FORMAT_VERSION = 1
 
 
-def compute_tag(game: str, network_arch: str, chess_encoder_history: Optional[int]) -> str:
+def compute_tag(
+    game: str, network_arch: str, chess_encoder_history: Optional[int]
+) -> str:
     """Signature of the trainee's input encoding - the thing that must match for
     a saved buffer to be reusable. Trajectories are recorded with the trainee's
     encoder, which is fully determined by (game, network arch, history length),

@@ -141,6 +141,9 @@ def main():
     use_cprofile = bool(args.cprofile_out)
     cprofiler = cProfile.Profile() if use_cprofile else nullcontext()
 
+    logger.info("Running 3 warmup steps to let torch.compile and CUDA graphs finish compiling...")
+    trainer.train(batch_size=args.batch_size, train_steps=3)
+
     logger.info(
         f"Profiling {args.training_iterations} training step(s) "
         f"(batch_size={args.batch_size}, minibatch_size={args.minibatch_size})"

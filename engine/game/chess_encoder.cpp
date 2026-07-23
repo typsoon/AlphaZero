@@ -12,18 +12,14 @@ void ChessEncoderV1::write_canonical_state(const GameState &state, float *out_bu
     const Chess &game = static_cast<const Chess &>(state);
     std::fill(out_buffer, out_buffer + 19 * 64, 0.0f); // NOLINT
 
-    bool p1_k_castle = (game.player == 0)
-                           ? (game.k_move_count == 0 && game.r2_move_count == 0)
-                           : (game.K_move_count == 0 && game.R2_move_count == 0);
-    bool p1_q_castle = (game.player == 0)
-                           ? (game.k_move_count == 0 && game.r1_move_count == 0)
-                           : (game.K_move_count == 0 && game.R1_move_count == 0);
-    bool p2_k_castle = (game.player == 0)
-                           ? (game.K_move_count == 0 && game.R2_move_count == 0)
-                           : (game.k_move_count == 0 && game.r2_move_count == 0);
-    bool p2_q_castle = (game.player == 0)
-                           ? (game.K_move_count == 0 && game.R1_move_count == 0)
-                           : (game.k_move_count == 0 && game.r1_move_count == 0);
+    bool p1_k_castle = (game.player == 0) ? (game.k_move_count == 0 && game.r2_move_count == 0)
+                                          : (game.K_move_count == 0 && game.R2_move_count == 0);
+    bool p1_q_castle = (game.player == 0) ? (game.k_move_count == 0 && game.r1_move_count == 0)
+                                          : (game.K_move_count == 0 && game.R1_move_count == 0);
+    bool p2_k_castle = (game.player == 0) ? (game.K_move_count == 0 && game.R2_move_count == 0)
+                                          : (game.k_move_count == 0 && game.r2_move_count == 0);
+    bool p2_q_castle = (game.player == 0) ? (game.K_move_count == 0 && game.R1_move_count == 0)
+                                          : (game.k_move_count == 0 && game.r1_move_count == 0);
 
     for (int i = 0; i < 8; ++i) {
         for (int j = 0; j < 8; ++j) {

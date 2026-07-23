@@ -173,6 +173,7 @@ void Chess::step(int action) {
     // guard storms and the glibc heap-corruption aborts seen in training. Dumps
     // the full position + the offending action, then aborts so a debugger/core
     // shows the caller.
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
     static const bool verify_legality = std::getenv("ALPHAZERO_VERIFY_STEP_LEGALITY") != nullptr;
     if (verify_legality) {
         auto legal = get_legal_actions();

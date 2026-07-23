@@ -4,6 +4,7 @@
 
 #include "game/game.hpp"
 #include "inference/basic_inferer.hpp"
+#include "inference/dual_inferer.hpp"
 #include "mcts.hpp"
 #include "mcts/mcts_factory.hpp"
 #include "replay_buffer.hpp"
@@ -199,7 +200,8 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
                float resignation_threshold, int resignation_consecutive_moves,
                int resignation_min_ply, float resignation_disable_probability, float fpu_reduction,
                std::shared_ptr<StateEncoder> encoder,
-               std::shared_ptr<StateEncoder> self_play_encoder) {
+               std::shared_ptr<StateEncoder> self_play_encoder, std::string value_network_path,
+               std::shared_ptr<StateEncoder> value_network_encoder) {
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
@@ -255,10 +257,36 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
     auto factory_encoder = self_play_encoder ? self_play_encoder : encoder;
     auto inferer_factory = NetworkInfererFactory(network_path, device, wait_for_count, timeout_ms,
                                                  transposition_cache_entries, factory_encoder);
+
+    std::optional<NetworkInfererFactory> value_inferer_factory;
+    if (!value_network_path.empty()) {
+        auto val_encoder = value_network_encoder ? value_network_encoder : factory_encoder;
+        value_inferer_factory.emplace(value_network_path, device, wait_for_count, timeout_ms,
+                                      transposition_cache_entries, val_encoder);
+    }
+
+    struct MaybeDualFactory : InfererFactory {
+        NetworkInfererFactory &policy_fac;
+        NetworkInfererFactory *value_fac;
+        MaybeDualFactory(NetworkInfererFactory &p, NetworkInfererFactory *v)
+            : policy_fac(p), value_fac(v) {}
+        std::unique_ptr<Inferer> get_inferer() override {
+            if (!value_fac)
+                return policy_fac.get_inferer();
+            return std::make_unique<DualNetworkInferer>(policy_fac.get_inferer(),
+                                                        value_fac->get_inferer());
+        }
+    };
+    MaybeDualFactory dual_factory(inferer_factory,
+                                  value_inferer_factory ? &*value_inferer_factory : nullptr);
+
+    // Calculate necessary arena size for the MCTS memory pool
+    size_t arena_size_bytes = calculate_arena_size(initial_game->getActionSize(), mcts_num_simulations);
+
     // Pass the PUCT/arena defaults through explicitly so fpu_reduction (the last
     // argument) reaches the factory; 0.0 reproduces the original assume-draw FPU.
-    MCTSFactory mcts_factory(inferer_factory, 1.25f, 19652.0f, 0.25f, 0.3f,
-                             default_arena_size_in_bytes, fpu_reduction);
+    MCTSFactory mcts_factory(dual_factory, 1.25f, 19652.0f, 0.25f, 0.3f,
+                             arena_size_bytes, fpu_reduction);
 
     std::atomic<int> games_finished{0};
     std::atomic<int> games_resigned{0};

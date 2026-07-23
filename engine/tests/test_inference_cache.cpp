@@ -34,18 +34,18 @@ TEST_GROUP(InferenceCacheTests){};
 TEST(InferenceCacheTests, InsertThenLookupRoundTrips) {
     InferenceCache cache(/*max_entries=*/1024);
     auto res = make_result(7);
-    cache.insert(42, res);
+    cache.insert(42, std::make_shared<const inference_result>(res));
 
-    inference_result out;
-    CHECK_TRUE(cache.lookup(42, out));
-    check_result_equal(res, out);
+    auto out = cache.lookup(42);
+    CHECK_TRUE(out != nullptr);
+    check_result_equal(res, *out);
     CHECK_EQUAL(1, static_cast<int>(cache.hits()));
 }
 
 TEST(InferenceCacheTests, MissingKeyIsAMiss) {
     InferenceCache cache(/*max_entries=*/1024);
-    inference_result out;
-    CHECK_FALSE(cache.lookup(42, out));
+    auto out = cache.lookup(42);
+    CHECK_TRUE(out == nullptr);
     CHECK_EQUAL(1, static_cast<int>(cache.misses()));
     CHECK_EQUAL(0, static_cast<int>(cache.hits()));
 }
@@ -61,13 +61,13 @@ TEST(InferenceCacheTests, CollidingKeyEvictsPreviousEntry) {
     // 16 shards (default) x 1 slot each: any two keys with equal shard bits
     // (bits 48+) collide. Keys 1 and 2 both have shard bits 0.
     InferenceCache cache(/*max_entries=*/16);
-    cache.insert(1, make_result(1));
-    cache.insert(2, make_result(2));
+    cache.insert(1, std::make_shared<const inference_result>(make_result(1)));
+    cache.insert(2, std::make_shared<const inference_result>(make_result(2)));
 
-    inference_result out;
-    CHECK_FALSE(cache.lookup(1, out)); // evicted by key 2
-    CHECK_TRUE(cache.lookup(2, out));
-    check_result_equal(make_result(2), out);
+    CHECK_TRUE(cache.lookup(1) == nullptr); // evicted by key 2
+    auto out = cache.lookup(2);
+    CHECK_TRUE(out != nullptr);
+    check_result_equal(make_result(2), *out);
 }
 
 TEST(InferenceCacheTests, HashStateDiffersOnAnySingleValueChange) {
@@ -98,9 +98,9 @@ TEST(InferenceCacheTests, HashStateDiffersOnAnySingleValueChange) {
 // always change the full hash, and must change the LOW 32 bits in the vast
 // majority of pairs (the broken mixer changed them in exactly zero).
 TEST(InferenceCacheTests, HashStateAvalanchesOddIndexedCellChanges) {
-    constexpr size_t kStateSize = 19 * 8 * 8;
+    constexpr size_t kStateSize = 19 * 8 * 8ULL;
     std::vector<float> base(kStateSize, 0.0f);
-    for (size_t i = 12 * 64; i < kStateSize; ++i)
+    for (size_t i = 12 * 64ULL; i < kStateSize; ++i)
         base[i] = 1.0f; // constant planes, as in a real canonical state
 
     int total = 0;
@@ -112,9 +112,9 @@ TEST(InferenceCacheTests, HashStateAvalanchesOddIndexedCellChanges) {
                 if (from == to)
                     continue;
                 auto a = base;
-                a[plane * 64 + from] = 1.0f;
+                a[plane * 64ULL + from] = 1.0f;
                 auto b = base;
-                b[plane * 64 + to] = 1.0f;
+                b[plane * 64ULL + to] = 1.0f;
                 uint64_t ka = InferenceCache::hash_state(a.data(), a.size());
                 uint64_t kb = InferenceCache::hash_state(b.data(), b.size());
                 ++total;
@@ -153,12 +153,13 @@ TEST(InferenceCacheTests, ConcurrentReadersAndWritersStayConsistent) {
                 uint64_t small = static_cast<uint64_t>((i * 31 + t * 7) % kKeySpace) + 1;
                 uint64_t key = small | (small << 48U);
                 if ((i + t) % 3 == 0) {
-                    cache.insert(key, make_result(static_cast<int>(small)));
+                    cache.insert(key, std::make_shared<const inference_result>(
+                                          make_result(static_cast<int>(small))));
                 } else {
-                    inference_result out;
-                    if (cache.lookup(key, out)) {
-                        if (out.legal_actions.size() != 3 ||
-                            out.legal_actions[0] != static_cast<int>(small)) {
+                    auto out = cache.lookup(key);
+                    if (out) {
+                        if (out->legal_actions.size() != 3 ||
+                            out->legal_actions[0] != static_cast<int>(small)) {
                             corruption = true;
                         }
                     }

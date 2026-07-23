@@ -63,7 +63,9 @@ void self_play(std::shared_ptr<Game> game, std::string network_path, ReplayBuffe
                float resignation_threshold = -0.95f, int resignation_consecutive_moves = 3,
                int resignation_min_ply = 60, float resignation_disable_probability = 0.1f,
                float fpu_reduction = 0.0f, std::shared_ptr<StateEncoder> encoder = nullptr,
-               std::shared_ptr<StateEncoder> self_play_encoder = nullptr);
+               std::shared_ptr<StateEncoder> self_play_encoder = nullptr,
+               std::string value_network_path = "",
+               std::shared_ptr<StateEncoder> value_network_encoder = nullptr);
 
 // Assuming Game, MCTS, ReplayBuffer, InfererFactory, MCTSFactory are defined
 // somewhere And you have torch or your own tensor type if needed

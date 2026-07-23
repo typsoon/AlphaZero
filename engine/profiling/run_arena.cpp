@@ -126,8 +126,11 @@ int main(int argc, char *argv[]) {
                               transposition_cache_entries, encoder_for(encoder_history_b));
     // eps=0: no Dirichlet root noise in PUCT mode - an arena wants each
     // engine's best play, not exploration. (search_gumbel ignores eps.)
-    MCTSFactory mcts_factory_a(factory_a, 1.25F, 19652.0F, /*eps=*/0.0F);
-    MCTSFactory mcts_factory_b(factory_b, 1.25F, 19652.0F, /*eps=*/0.0F);
+    // Compute dynamic arena size bounds based on game and sim limits
+    size_t arena_size_bytes = calculate_arena_size(initial_game->getActionSize(), mcts_num_simulations);
+
+    MCTSFactory mcts_factory_a(factory_a, 1.25F, 19652.0F, /*eps=*/0.0F, /*alpha=*/0.3F, arena_size_bytes);
+    MCTSFactory mcts_factory_b(factory_b, 1.25F, 19652.0F, /*eps=*/0.0F, /*alpha=*/0.3F, arena_size_bytes);
 
     std::vector<std::unique_ptr<MCTS>> thread_mcts_a;
     std::vector<std::unique_ptr<MCTS>> thread_mcts_b;

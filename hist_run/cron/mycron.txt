@@ -1,0 +1,2 @@
+0 * * * * cd $REPO_DIR && ./hist_run/cron/arena_check.sh
+*/10 * * * * cd $REPO_DIR && ./hist_run/cron/puzzle_check.sh

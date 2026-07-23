@@ -48,16 +48,18 @@ class InferenceCache {
     // requires max_entries > 0. num_shards is rounded up to a power of two.
     explicit InferenceCache(size_t max_entries, size_t num_shards = 16);
 
-    // FNV-1a over the tensor bytes. Never returns kEmptyKey, so a raw hash is
-    // always a valid occupied-slot marker.
+    // Fast non-cryptographic hash over the tensor bytes. Never returns
+    // kEmptyKey, so the raw hash is always a valid occupied-slot marker.
     static uint64_t hash_state(const float *data, size_t count);
 
-    // Returns true and fills `out` on a hit. Shared (reader) lock on one shard.
-    bool lookup(uint64_t key, inference_result &out);
+    // Returns the cached shared_ptr on a hit (zero-copy — no vector allocation),
+    // or nullptr on a miss. Shared (reader) lock on one shard.
+    std::shared_ptr<const inference_result> lookup(uint64_t key);
 
     // Overwrites whatever occupied the slot (always-replace). Exclusive
-    // (writer) lock on one shard.
-    void insert(uint64_t key, const inference_result &value);
+    // (writer) lock on one shard. Takes a shared_ptr so the same heap object
+    // can be inserted into the cache without an extra copy.
+    void insert(uint64_t key, std::shared_ptr<const inference_result> value);
 
     uint64_t hits() const { return hit_count.load(std::memory_order_relaxed); }
     uint64_t misses() const { return miss_count.load(std::memory_order_relaxed); }
@@ -67,7 +69,7 @@ class InferenceCache {
 
     struct Entry {
         uint64_t key = kEmptyKey;
-        inference_result value;
+        std::shared_ptr<const inference_result> value; // null == empty
     };
 
     // Heap-allocated per shard because std::shared_mutex is neither movable

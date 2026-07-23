@@ -169,7 +169,7 @@ TEST(ChessTests, EnPassantPlaneOnlyMarkedWhileCaptureIsTimely) {
     spdlog::info("Testing en-passant plane timeliness...");
     Chess game;
     ChessEncoderV1 encoder;
-    std::vector<float> tensor(19 * 8 * 8);
+    std::vector<float> tensor(19ULL * 8 * 8);
 
     // 1. d2-d4: EP on column 3 is live for black's reply.
     game.step(Chess::encode_action({6, 3, 4, 3, 0}));

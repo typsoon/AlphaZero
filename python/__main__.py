@@ -181,6 +181,19 @@ def get_args():
         "latest checkpoint as usual",
     )
     parser.add_argument(
+        "--self-play-value-network",
+        type=str,
+        default=None,
+        help="Use a different network for value predictions than for policy in self-play.",
+    )
+    parser.add_argument(
+        "--self-play-value-encoder-history",
+        type=int,
+        default=None,
+        choices=[1, 4, 8],
+        help="History length for the value network (default: None for legacy 19-plane encoder).",
+    )
+    parser.add_argument(
         "--self-play-encoder-history",
         type=int,
         default=None,
@@ -495,7 +508,12 @@ if __name__ == "__main__":
             get_chess_encoder(args.self_play_encoder_history)
             if args.self_play_network
             and args.self_play_encoder_history != args.chess_encoder_history
-            else None
+            else encoder
+        )
+        self_play_value_encoder = (
+            get_chess_encoder(args.self_play_value_encoder_history)
+            if args.self_play_value_network
+            else self_play_encoder
         )
 
     # Replay-buffer persistence compatibility signature. `tag` captures the
@@ -504,7 +522,9 @@ if __name__ == "__main__":
     replay_buffer_tag = compute_tag(
         args.game, args.network_arch, args.chess_encoder_history
     )
-    replay_buffer_state_shape = list(encoder.state_shape()) if encoder is not None else None
+    replay_buffer_state_shape = (
+        list(encoder.state_shape()) if encoder is not None else None
+    )
 
     if args.log_dir == "":
         log_dir = None
@@ -552,8 +572,10 @@ if __name__ == "__main__":
         resignation_disable_probability=args.resignation_disable_probability,
         fpu_reduction=args.fpu_reduction,
         self_play_network_path=args.self_play_network,
+        self_play_value_network_path=args.self_play_value_network,
         encoder=encoder,
         self_play_encoder=self_play_encoder,
+        self_play_value_encoder=self_play_value_encoder,
         replay_buffer_path=args.replay_buffer_path,
         replay_buffer_save_every=args.replay_buffer_save_every,
         replay_buffer_tag=replay_buffer_tag,

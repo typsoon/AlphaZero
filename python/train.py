@@ -31,7 +31,7 @@ class AlphaZeroTrainer:
         minibatch_size=4096,
         scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     ):
-        self.model = model
+        self.model = torch.compile(model.to(memory_format=torch.channels_last), mode="reduce-overhead")
         self.replay_buffer = replay_buffer
         self.optimizer = optimizer
         self.minibatch_size = minibatch_size
@@ -141,7 +141,7 @@ class AlphaZeroTrainer:
                         )
                         return global_step
 
-                    states = states.to(self.device, non_blocking=True)
+                    states = states.to(self.device, memory_format=torch.channels_last, non_blocking=True)
                     target_policies = target_policies.to(self.device, non_blocking=True)
                     target_values = target_values.to(self.device, non_blocking=True)
 
@@ -269,6 +269,7 @@ def self_play_and_train_loop(
     resignation_disable_probability: float = 0.1,
     fpu_reduction: float = 0.0,
     self_play_network_path: Optional[str] = None,
+    self_play_value_network_path: Optional[str] = None,
     # The input encoding self-play feeds into inference and records into
     # training trajectories. None (default) lets the C++ side pick the game's
     # default encoder (ChessEncoderV1 for chess). Must match whatever the
@@ -278,10 +279,9 @@ def self_play_and_train_loop(
     encoder: Optional[StateEncoder] = None,
     # Only meaningful with a frozen generator (self_play_network_path set) whose
     # encoding differs from the trainee's `encoder`: the encoding fed to the
-    # generator network, while `encoder` still governs trajectory recording.
-    # None (default) => the generator uses the same `encoder` as the trainee
-    # (correct for ordinary self-play and for a same-encoding generator).
+    # generator.
     self_play_encoder: Optional[StateEncoder] = None,
+    self_play_value_encoder: Optional[StateEncoder] = None,
     # Cross-run replay-buffer persistence. When replay_buffer_path is set, the
     # buffer is preloaded from it at startup (if a compatible sidecar is present)
     # and re-saved every replay_buffer_save_every iterations plus once on exit,
@@ -385,6 +385,8 @@ def self_play_and_train_loop(
                 fpu_reduction=fpu_reduction,
                 encoder=encoder,
                 self_play_encoder=self_play_encoder,
+                value_network_path=self_play_value_network_path or "",
+                value_network_encoder=self_play_value_encoder,
             )
 
             if writer is not None:

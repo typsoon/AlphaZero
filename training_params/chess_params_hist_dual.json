@@ -21,7 +21,7 @@
   "resignation_min_ply": 60,
   "resignation_disable_probability": 0.1,
   "fpu_reduction": 0.1,
-  "initial_lr": 0.00005,
+  "initial_lr": 0.0001,
   "lr_lower_bound": 0.00005,
   "initial_network": "checkpoints_hist/chess/chess_AZNetwork_hist_0.pt",
   "checkpoint_dir": "checkpoints_hist",
@@ -31,5 +31,6 @@
   "chess_encoder_history": 4,
   "tensorrt_every": 1,
   "replay_buffer_path": "/mnt/storage/users/z1201659/replay_buffer_hist.pt",
-  "replay_buffer_save_every": 20
+  "replay_buffer_save_every": 20,
+  "self_play_value_network": "champions/chess_AZNetwork_20260718_1432.pt_trt"
 }

@@ -1,8 +1,8 @@
 #!/bin/bash
 # Shared config for the history-run scheduled loop tasks (archive / arena /
 # puzzle). Sourced by each task script.
-REPO=/home/z1201659/AlphaZero/really_newest/AlphaZeroDev
-VENV=/mnt/storage/users/z1201659/.12_ml_venv/bin/activate
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export LD_LIBRARY_PATH=$(python -c "import torch_tensorrt, os; print(os.path.join(os.path.dirname(torch_tensorrt.__file__), 'lib'))"):$(python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"):$LD_LIBRARY_PATH
 
 HIST_PT="$REPO/checkpoints_hist/chess/chess_AZNetwork_hist_0.pt"
 HIST_SCRIPTED="$REPO/checkpoints_hist/chess/scripted/chess_AZNetwork_hist_0.pt_scripted"

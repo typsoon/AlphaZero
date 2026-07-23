@@ -29,10 +29,10 @@ void encode_frame(const Chess::board_t &board, int8_t perspective, int8_t repeti
         }
     }
     if (repetitions_before >= 1) {
-        std::fill(out + 12 * 64, out + 13 * 64, 1.0f);
+        std::fill(out + 12ULL * 64ULL, out + 13ULL * 64ULL, 1.0f);
     }
     if (repetitions_before >= 2) {
-        std::fill(out + 13 * 64, out + 14 * 64, 1.0f);
+        std::fill(out + 13ULL * 64ULL, out + 14ULL * 64ULL, 1.0f);
     }
 }
 } // namespace
@@ -45,9 +45,9 @@ ChessEncoderV2History::ChessEncoderV2History(int history) : history_(history) {
 }
 
 void ChessEncoderV2History::write_canonical_state(const GameState &state, float *out_buffer) const {
-    const Chess &game = static_cast<const Chess &>(state);
+    const auto &game = dynamic_cast<const Chess &>(state);
     int total_planes = kHistoryPlanes * history_ + kAuxiliaryPlanes;
-    std::fill(out_buffer, out_buffer + total_planes * 64, 0.0f);
+    std::fill(out_buffer, out_buffer + static_cast<ptrdiff_t>(total_planes) * 64, 0.0f);
 
     int8_t perspective = game.player;
 
@@ -65,24 +65,21 @@ void ChessEncoderV2History::write_canonical_state(const GameState &state, float 
         if (hist_idx >= game.history_count)
             break;
         encode_frame(game.history_boards[hist_idx], perspective,
-                    game.history_repetitions_before[hist_idx], out_buffer + frame * 14 * 64);
+                     game.history_repetitions_before[hist_idx],
+                     out_buffer + static_cast<ptrdiff_t>(frame) * 14 * 64);
     }
 
     // 7 auxiliary planes for the CURRENT position, appended after all history
     // frames. Castling-rights derivation matches ChessEncoderV1's exactly.
     int base = history_ * kHistoryPlanes * 64;
-    bool own_k_castle = (game.player == 0)
-                            ? (game.k_move_count == 0 && game.r2_move_count == 0)
-                            : (game.K_move_count == 0 && game.R2_move_count == 0);
-    bool own_q_castle = (game.player == 0)
-                            ? (game.k_move_count == 0 && game.r1_move_count == 0)
-                            : (game.K_move_count == 0 && game.R1_move_count == 0);
-    bool opp_k_castle = (game.player == 0)
-                            ? (game.K_move_count == 0 && game.R2_move_count == 0)
-                            : (game.k_move_count == 0 && game.r2_move_count == 0);
-    bool opp_q_castle = (game.player == 0)
-                            ? (game.K_move_count == 0 && game.R1_move_count == 0)
-                            : (game.k_move_count == 0 && game.r1_move_count == 0);
+    bool own_k_castle = (game.player == 0) ? (game.k_move_count == 0 && game.r2_move_count == 0)
+                                           : (game.K_move_count == 0 && game.R2_move_count == 0);
+    bool own_q_castle = (game.player == 0) ? (game.k_move_count == 0 && game.r1_move_count == 0)
+                                           : (game.K_move_count == 0 && game.R1_move_count == 0);
+    bool opp_k_castle = (game.player == 0) ? (game.K_move_count == 0 && game.R2_move_count == 0)
+                                           : (game.k_move_count == 0 && game.r2_move_count == 0);
+    bool opp_q_castle = (game.player == 0) ? (game.K_move_count == 0 && game.R1_move_count == 0)
+                                           : (game.k_move_count == 0 && game.r1_move_count == 0);
 
     std::fill(out_buffer + base, out_buffer + base + 64, (game.player == 0) ? 1.0f : 0.0f);
     std::fill(out_buffer + base + 64, out_buffer + base + 128, own_k_castle ? 1.0f : 0.0f);
@@ -94,7 +91,7 @@ void ChessEncoderV2History::write_canonical_state(const GameState &state, float 
     // move_count is this engine's ply counter (0 at game start, incremented once
     // per move_piece() call), matching the reference's `ply` exactly.
     float fullmove_frac =
-        std::min(1.0f, static_cast<float>(game.move_count / 2 + 1) / 200.0f);
+        std::min(1.0f, (static_cast<float>(game.move_count) / 2.0f + 1.0f) / 200.0f);
     std::fill(out_buffer + base + 384, out_buffer + base + 448, fullmove_frac);
 }
 

@@ -286,12 +286,14 @@ def task_build():
                 if f"CMAKE_BUILD_TYPE:STRING={build_type}" in f.read():
                     run_cmake = False
 
+        import sys
         cmake_cmd = (
             f"cmake -S {PROJ_ROOT} -B {BUILD_DIR} "
             f"-DCMAKE_BUILD_TYPE={build_type} "
-            "-DCMAKE_PREFIX_PATH=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)') "
-            "-DPython3_EXECUTABLE=$(which python) "
-            "-DPYTHON_EXECUTABLE=$(which python) "
+            f"-DCMAKE_PREFIX_PATH=$({sys.executable} -c 'import torch; print(torch.utils.cmake_prefix_path)') "
+            f"-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc "
+            f"-DPython3_EXECUTABLE={sys.executable} "
+            f"-DPYTHON_EXECUTABLE={sys.executable} "
             "-DBUILD_TESTS=ON "
             "-DVCPKG_MANIFEST_FEATURES=test "
             f"-DCMAKE_TOOLCHAIN_FILE={toolchain}"
@@ -657,9 +659,26 @@ def task_run_inference_server():
     """Run the inference server directly from the terminal."""
     inference_bin = BUILD_DIR / "inference_server" / "inference_server"
 
-    def run_server(network_path, game):
+    def run_server(
+        network_path,
+        game,
+        device,
+        socket,
+        mcts_search_depth,
+        mcts_batch_size,
+        chess_encoder_history,
+    ):
         network_path = resolve_network_path(network_path, game)
-        cmd = f"{inference_bin} --network-path {network_path} --game {game}"
+        cmd = (
+            f"{inference_bin} --network-path {network_path} --game {game}"
+            f" --device {device} --mcts-search-depth {mcts_search_depth}"
+            f" --mcts-batch-size {mcts_batch_size}"
+        )
+        if socket:
+            cmd += f" --socket {socket}"
+        # chess-only; only pass when a history encoder is requested.
+        if game == "chess" and chess_encoder_history:
+            cmd += f" --chess-encoder-history {chess_encoder_history}"
         return run_protected(cmd)
 
     return {
@@ -674,6 +693,41 @@ def task_run_inference_server():
                 "choices": SUPPORTED_GAMES,
             },
             NETWORK_PARAM,
+            {
+                "name": "device",
+                "long": "device",
+                "type": str,
+                "default": "cuda",
+                "help": "Inference device (cuda or cpu)",
+            },
+            {
+                "name": "socket",
+                "long": "socket",
+                "type": str,
+                "default": "",
+                "help": "Unix socket path (empty = auto-generate under /tmp)",
+            },
+            {
+                "name": "mcts_search_depth",
+                "long": "mcts-search-depth",
+                "type": int,
+                "default": 800,
+                "help": "MCTS simulations per move",
+            },
+            {
+                "name": "mcts_batch_size",
+                "long": "mcts-batch-size",
+                "type": int,
+                "default": 32,
+                "help": "Inference batch size",
+            },
+            {
+                "name": "chess_encoder_history",
+                "long": "chess-encoder-history",
+                "type": int,
+                "default": 0,
+                "help": "Chess only: 0 = 19-plane v1; 1/4/8 = history encoder",
+            },
         ],
         "task_dep": ["build"],
     }

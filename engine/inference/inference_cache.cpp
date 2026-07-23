@@ -30,75 +30,80 @@ InferenceCache::InferenceCache(size_t max_entries, size_t num_shards) {
 
 namespace {
 
-// splitmix64's finalizer (Steele, Lea & Flood / Vigna) - full avalanche:
-// every input bit affects every output bit. The right-shift XORs are what the
-// previous FNV-style `h ^= block; h *= prime` mixing lacked: multiplication
-// mod 2^64 only carries bit influence *upward*, so a difference confined to a
-// block's high bytes (bytes 4-7, i.e. every ODD-indexed float of the tensor)
-// could never reach the hash's low bits, and the prime's 2^40 term kept
-// pushing it off the top. Measured on 100k canonical-tensor pairs differing
-// only by one piece on a different odd-column square: the FNV-style block mix
-// produced 370 full 64-bit collisions (0.37%!) and identical low-32-bits in
-// ALL 100k pairs; this mixer (like true byte-wise FNV-1a) produced none. Those
-// collisions made the cache serve a *different position's* (legal_actions,
-// logits) as hits, which is exactly what sent illegal actions into MCTS
-// during training - see move_piece()'s en-passant clearing in chess.cpp for
-// how one shape of illegal action then corrupts the heap.
-inline uint64_t mix64(uint64_t z) {
-    z ^= z >> 30U;
-    z *= 0xbf58476d1ce4e5b9ULL;
-    z ^= z >> 27U;
-    z *= 0x94d049bb133111ebULL;
-    z ^= z >> 31U;
-    return z;
+// wyhash-style finalizer for 64-bit values - full avalanche, branch-free.
+inline uint64_t wymix(uint64_t a, uint64_t b) {
+    __uint128_t r = static_cast<__uint128_t>(a) * static_cast<__uint128_t>(b);
+    return static_cast<uint64_t>(r) ^ static_cast<uint64_t>(r >> 64U);
 }
+
+// Two independent multiply-mix constants (from wyhash paper).
+constexpr uint64_t kP0 = 0xa0761d6478bd642fULL;
+constexpr uint64_t kP1 = 0xe7037ed1a0b428dbULL;
+constexpr uint64_t kP2 = 0x8ebc6af09c88c6e3ULL;
+constexpr uint64_t kP3 = 0x589965cc75374cc3ULL;
 
 } // namespace
 
 uint64_t InferenceCache::hash_state(const float *data, size_t count) {
-    constexpr uint64_t kSeed = 0xcbf29ce484222325ULL;
-    uint64_t h = kSeed;
+    // wyhash-style streaming hash. We XOR pairs of 8-byte words together in
+    // two independent lanes (a, b), then combine with a final multiply-mix.
+    // This halves the number of multiplications compared to the previous
+    // per-block mix64 approach (one multiply every 16 bytes instead of 8),
+    // while preserving full avalanche through the final wymix call.
+    // The pair-wise XOR before multiplying folds every input bit into both
+    // lanes, keeping the hash quality equivalent to wyhash's own design.
+    const size_t byte_len = count * sizeof(float);
+    const auto *p = reinterpret_cast<const uint8_t *>(data); // NOLINT
 
-    size_t bytes_len = count * sizeof(float);
-    const auto *bytes = reinterpret_cast<const uint8_t *>(data); // NOLINT
+    uint64_t seed = kP0 ^ static_cast<uint64_t>(byte_len) * kP1;
+    uint64_t a = 0, b = 0;
 
-    size_t blocks = bytes_len / 8;
-    for (size_t i = 0; i < blocks; ++i) {
-        uint64_t block; // NOLINT
-        std::memcpy(&block, bytes + i * 8, 8);
-        h = mix64(h ^ block);
+    size_t i = 0;
+    // Process 16-byte chunks: read two uint64_t words and combine them.
+    for (; i + 16 <= byte_len; i += 16) {
+        uint64_t lo = 0;
+        uint64_t hi = 0;
+        std::memcpy(&lo, p + i, 8);
+        std::memcpy(&hi, p + i + 8, 8);
+        a ^= lo;
+        b ^= hi;
+        seed = wymix(a ^ kP0, b ^ seed);
     }
-
-    if (blocks * 8 < bytes_len) {
+    // Remaining 8 bytes (if any).
+    if (i + 8 <= byte_len) {
+        uint64_t lo = 0;
+        std::memcpy(&lo, p + i, 8);
+        a ^= lo;
+        i += 8;
+    }
+    // Remaining tail (< 8 bytes).
+    if (i < byte_len) {
         uint64_t tail = 0;
-        std::memcpy(&tail, bytes + blocks * 8, bytes_len - blocks * 8);
-        // Fold the tail's byte count in too, so buffers differing only in a
-        // trailing zero byte don't alias.
-        h = mix64(h ^ tail ^ (bytes_len - blocks * 8));
+        std::memcpy(&tail, p + i, byte_len - i);
+        b ^= tail;
     }
-
+    uint64_t h = wymix(a ^ kP2, b ^ seed) ^ wymix(kP3, static_cast<uint64_t>(count));
     return h == kEmptyKey ? 1 : h;
 }
 
-bool InferenceCache::lookup(uint64_t key, inference_result &out) {
+std::shared_ptr<const inference_result> InferenceCache::lookup(uint64_t key) {
     Shard &shard = shard_for(key);
     {
         std::shared_lock<std::shared_mutex> lock(shard.mutex);
         const Entry &entry = shard.slots[slot_for(key)];
-        if (entry.key == key) {
-            out = entry.value;
+        if (entry.key == key && entry.value) {
             hit_count.fetch_add(1, std::memory_order_relaxed);
-            return true;
+            return entry.value; // shared_ptr copy: no vector allocation
         }
     }
     miss_count.fetch_add(1, std::memory_order_relaxed);
-    return false;
+    return nullptr;
 }
 
-void InferenceCache::insert(uint64_t key, const inference_result &value) {
+void InferenceCache::insert(uint64_t key, std::shared_ptr<const inference_result> value) {
     Shard &shard = shard_for(key);
     std::unique_lock<std::shared_mutex> lock(shard.mutex);
     Entry &entry = shard.slots[slot_for(key)];
     entry.key = key;
-    entry.value = value;
+    entry.value = std::move(value); // pointer store, no deep copy
 }

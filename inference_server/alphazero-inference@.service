@@ -4,13 +4,23 @@ After=network.target
 
 [Service]
 Type=simple
-# Provide default values (overridden by EnvironmentFile)
+# Default values (overridden by the EnvironmentFile below).
+Environment="DEVICE=cuda"
 Environment="MCTS_SEARCH_DEPTH=800"
 Environment="MCTS_BATCH_SIZE=1"
-# Load environment variables from this file
+# Per-game config: NETWORK_PATH, DEVICE, MCTS_SEARCH_DEPTH, MCTS_BATCH_SIZE,
+# CHESS_ENCODER_HISTORY, SOCKET (see inference.env.example).
 EnvironmentFile=%h/.config/alphazero/inference-%i.env
-# Execute the server with the variables
-ExecStart=%h/.local/bin/alphazero-inference-server --network-path ${NETWORK_PATH} --device ${DEVICE} --game %i --mcts-search-depth ${MCTS_SEARCH_DEPTH} --mcts-batch-size ${MCTS_BATCH_SIZE}
+# Run through `sh -c` so optional args (SOCKET, CHESS_ENCODER_HISTORY) are only
+# passed when set. `$$VAR` is escaped so the shell — not systemd — expands it.
+ExecStart=/bin/sh -c 'exec %h/.local/bin/alphazero-inference-server \
+  --network-path "$$NETWORK_PATH" \
+  --device "$$DEVICE" \
+  --game %i \
+  --mcts-search-depth "$$MCTS_SEARCH_DEPTH" \
+  --mcts-batch-size "$$MCTS_BATCH_SIZE" \
+  $${CHESS_ENCODER_HISTORY:+--chess-encoder-history "$$CHESS_ENCODER_HISTORY"} \
+  $${SOCKET:+--socket "$$SOCKET"}'
 Restart=on-failure
 RestartSec=5s
 

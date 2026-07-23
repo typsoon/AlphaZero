@@ -69,7 +69,11 @@ void ReplayBuffer::save(const std::string &path) const {
     std::shared_lock<std::shared_mutex> lock(rw_mutex);
     auto n = static_cast<int64_t>(size);
 
-    torch::Tensor states, rewards, idx_all, val_all, lengths;
+    torch::Tensor states;
+    torch::Tensor rewards;
+    torch::Tensor idx_all;
+    torch::Tensor val_all;
+    torch::Tensor lengths;
     if (n == 0 || !states_buffer.defined()) {
         states = torch::empty({0});
         rewards = torch::empty({0}, torch::kFloat32);
@@ -83,7 +87,8 @@ void ReplayBuffer::save(const std::string &path) const {
         // mutate what we're serializing after the lock is released.
         states = states_buffer.narrow(0, 0, n).clone();
         rewards = rewards_buffer.narrow(0, 0, n).clone();
-        std::vector<torch::Tensor> idx_parts, val_parts;
+        std::vector<torch::Tensor> idx_parts;
+        std::vector<torch::Tensor> val_parts;
         idx_parts.reserve(n);
         val_parts.reserve(n);
         std::vector<int64_t> lens(n);
@@ -120,18 +125,17 @@ void ReplayBuffer::load(const std::string &path) {
     const torch::Tensor &val_all = archive[3];
     const torch::Tensor &lengths = archive[4];
 
-    auto n = static_cast<int64_t>(lengths.numel());
+    auto n = lengths.numel();
     if (n == 0) {
         return;
     }
     if (archive.size() >= 6) {
         auto loaded_action_size = archive[5].accessor<int64_t, 1>()[0];
         if (loaded_action_size != action_size) {
-            throw std::runtime_error(
-                "ReplayBuffer::load: action_size mismatch (archive " +
-                std::to_string(loaded_action_size) + " vs buffer " +
-                std::to_string(action_size) + ") in '" + path +
-                "'; the saved policy targets index a different action space");
+            throw std::runtime_error("ReplayBuffer::load: action_size mismatch (archive " +
+                                     std::to_string(loaded_action_size) + " vs buffer " +
+                                     std::to_string(action_size) + ") in '" + path +
+                                     "'; the saved policy targets index a different action space");
         }
     }
 

@@ -605,8 +605,8 @@ class DynamicBatcher {
     DynamicBatcher(int wait_for_count, int timeout_ms, std::shared_ptr<Network> network,
                    torch::Device device, std::shared_ptr<StateEncoder> encoder = nullptr)
         : wait_for_count(wait_for_count), timeout_ms(timeout_ms), network(network),
-          infer_method(network->get_method("forward")), device(device) {
-        this->encoder = std::move(encoder);
+          encoder(std::move(encoder)), infer_method(network->get_method("forward")),
+          device(device) {
         worker = std::thread(&DynamicBatcher::worker_loop, this);
         gpu_executor_thread = std::thread(&DynamicBatcher::gpu_executor_loop, this);
     }
@@ -677,11 +677,15 @@ vector<inference_result> NetworkInferer::infer(const vector<const GameState *> &
     size_t state_size = 1;
     for (int64_t d : shape)
         state_size *= static_cast<size_t>(d);
+
+    // Cache hits: stored as shared_ptr to avoid copying the vectors.
+    std::vector<std::shared_ptr<const inference_result>> hit_ptrs(n);
     for (size_t i = 0; i < n; ++i) {
         scratch.resize(state_size);
         encoder->write_canonical_state(*states[i], scratch.data());
         keys[i] = InferenceCache::hash_state(scratch.data(), state_size);
-        hit[i] = cache->lookup(keys[i], results[i]);
+        hit_ptrs[i] = cache->lookup(keys[i]);
+        hit[i] = (hit_ptrs[i] != nullptr);
     }
 
     // Submit only the misses, deduplicated by key: distinct MCTS nodes in one
@@ -700,23 +704,31 @@ vector<inference_result> NetworkInferer::infer(const vector<const GameState *> &
             miss_states.push_back(states[i]);
     }
 
+    // Wrap each unique miss result in a shared_ptr and insert into cache;
+    // all consumers of the same deduplicated key share the same heap object.
+    std::vector<std::shared_ptr<const inference_result>> miss_ptrs;
     if (!miss_states.empty()) {
         auto miss_results = batcher->submit(miss_states);
-        for (const auto &[key, miss_idx] : first_miss_with_key) {
-            cache->insert(key, miss_results[miss_idx]);
-        }
-        // Copy, not move: several i's can share one deduplicated miss_results
-        // element, and a move would gut it for every consumer after the first.
-        for (size_t i = 0; i < n; ++i) {
-            if (!hit[i])
-                results[i] = miss_results[miss_index_of[i]];
-        }
+        miss_ptrs.reserve(miss_results.size());
+        for (auto &r : miss_results)
+            miss_ptrs.push_back(std::make_shared<const inference_result>(std::move(r)));
+        for (const auto &[key, miss_idx] : first_miss_with_key)
+            cache->insert(key, miss_ptrs[miss_idx]);
+    }
+
+    // Populate final results by dereferencing shared_ptrs - no vector copies.
+    for (size_t i = 0; i < n; ++i) {
+        if (hit[i])
+            results[i] = *hit_ptrs[i];
+        else
+            results[i] = *miss_ptrs[miss_index_of[i]];
     }
 
     // TEMP DIAGNOSTIC (env-gated): verify every delivered result actually
     // belongs to the state it's paired with, by comparing its legal_actions
     // against a fresh recomputation. Distinguishes cache-served poison from
     // batcher-level mispairing at the exact point of delivery.
+    // NOLINTNEXTLINE(concurrency-mt-unsafe)
     static const bool verify_results = std::getenv("ALPHAZERO_VERIFY_INFER_RESULTS") != nullptr;
     if (verify_results) {
         for (size_t i = 0; i < n; ++i) {
@@ -825,9 +837,8 @@ NetworkInfererFactory::NetworkInfererFactory(std::string network_file_path, torc
                                              size_t transposition_cache_entries,
                                              std::shared_ptr<StateEncoder> encoder)
     : network_file_path(std::move(network_file_path)), device(device),
-      wait_for_count(wait_for_count), timeout_ms(timeout_ms),
+      wait_for_count(wait_for_count), timeout_ms(timeout_ms), encoder(std::move(encoder)),
       network(get_network_func(this->network_file_path, device)) {
-    this->encoder = std::move(encoder);
     network->to(device);
     network->eval();
 #ifdef ALPHAZERO_TRT_LIB_PATH

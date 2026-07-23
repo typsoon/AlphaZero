@@ -12,9 +12,9 @@ TEST(ChessEncoderV2HistoryTests, RejectsUnsupportedHistoryLengths) {
     CHECK_THROWS(std::invalid_argument, ChessEncoderV2History(0));
     CHECK_THROWS(std::invalid_argument, ChessEncoderV2History(3));
     // 1, 4, 8 must NOT throw.
-    ChessEncoderV2History(1);
-    ChessEncoderV2History(4);
-    ChessEncoderV2History(8);
+    ChessEncoderV2History e1(1);
+    ChessEncoderV2History e4(4);
+    ChessEncoderV2History e8(8);
 }
 
 TEST(ChessEncoderV2HistoryTests, StateShapeMatchesFormula) {
@@ -55,7 +55,7 @@ TEST(ChessEncoderV2HistoryTests, GameStartHasZeroedHistoryFramesAndCorrectAuxPla
     // full castling rights, clocks near zero.
     int base = 4 * 14 * 64;
     for (int k = 0; k < 64; ++k) {
-        CHECK_EQUAL_TEXT(1.0f, tensor[base + k], "side-to-move plane");           // white to move
+        CHECK_EQUAL_TEXT(1.0f, tensor[base + k], "side-to-move plane"); // white to move
         CHECK_EQUAL_TEXT(1.0f, tensor[base + 64 + k], "own kingside castle");
         CHECK_EQUAL_TEXT(1.0f, tensor[base + 128 + k], "own queenside castle");
         CHECK_EQUAL_TEXT(1.0f, tensor[base + 192 + k], "opp kingside castle");
@@ -112,14 +112,14 @@ TEST(ChessEncoderV2HistoryTests, RepetitionFlagsSetOnActualRepeat) {
     encoder.write_canonical_state(game, tensor.data());
     // Current position (frame 0) has occurred once before -> reps-before=1 ->
     // plane 12 set, plane 13 not.
-    CHECK_EQUAL(1.0f, tensor[12 * 64]);
-    CHECK_EQUAL(0.0f, tensor[13 * 64]);
+    CHECK_EQUAL(1.0f, tensor[12 * 64ULL]);
+    CHECK_EQUAL(0.0f, tensor[13 * 64ULL]);
 
     knight_shuffle(); // position recurs again (3rd occurrence)
     encoder.write_canonical_state(game, tensor.data());
     // reps-before clamped to 2 -> both plane 12 and 13 set.
-    CHECK_EQUAL(1.0f, tensor[12 * 64]);
-    CHECK_EQUAL(1.0f, tensor[13 * 64]);
+    CHECK_EQUAL(1.0f, tensor[12 * 64ULL]);
+    CHECK_EQUAL(1.0f, tensor[13 * 64ULL]);
 }
 
 TEST(ChessEncoderV2HistoryTests, ResetAndSetCustomStateClearHistory) {
@@ -162,9 +162,11 @@ TEST(ChessEncoderV2HistoryTests, SweepInvariantsHoldAcrossHistoryLengths) {
         for (int g = 0; g < 30; ++g) {
             Chess game;
             for (int ply = 0; ply < 100; ++ply) {
-                if (game.is_terminal()) break;
+                if (game.is_terminal())
+                    break;
                 auto legal = game.get_legal_actions();
-                if (legal.empty()) break;
+                if (legal.empty())
+                    break;
 
                 encoder.write_canonical_state(game, tensor.data());
                 for (int frame = 0; frame < h; ++frame) {
@@ -191,4 +193,6 @@ TEST(ChessEncoderV2HistoryTests, SweepInvariantsHoldAcrossHistoryLengths) {
     }
 }
 
-int main(int ac, char **av) { return CommandLineTestRunner::RunAllTests(ac, av); }
+int main(int ac, char **av) {
+    return CommandLineTestRunner::RunAllTests(ac, av);
+}
