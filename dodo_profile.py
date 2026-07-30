@@ -21,13 +21,16 @@ _JSON_FIELD_MAP = {
 }
 
 
-def _merge_params_file(params_file: str, params: dict) -> dict:
+def _merge_params_file(params_file: str, params: dict, field_map: dict = None) -> dict:
     """Load a training-params JSON and merge it into *params*, returning a new dict.
 
     CLI flags always win over the file; the file only fills in values that were
     not explicitly overridden on the command line (i.e. still at their doit default).
     Unknown JSON keys are silently ignored so the full training JSON can be passed
     without needing to strip training-only fields first.
+
+    *field_map* overrides the default _JSON_FIELD_MAP for callers whose doit param
+    names diverge from it (e.g. run_inference_server's mcts_search_depth).
     """
     if not params_file:
         return params
@@ -36,9 +39,12 @@ def _merge_params_file(params_file: str, params: dict) -> dict:
     with open(params_file) as f:
         data = json.load(f)
 
+    if field_map is None:
+        field_map = _JSON_FIELD_MAP
+
     merged = dict(params)
     for key, value in data.items():
-        param_name = _JSON_FIELD_MAP.get(key, key)
+        param_name = field_map.get(key, key)
         if param_name in merged:
             merged[param_name] = value
     return merged

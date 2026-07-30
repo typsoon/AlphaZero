@@ -1,0 +1,9 @@
+{
+  "game": "chess",
+  "mcts_batch_size": 1,
+  "mcts_simulations": 800,
+  "full_search_probability": 1,
+  "resignation_enabled": false,
+  "network_arch": "chess_v2",
+  "chess_encoder_history": 4
+}

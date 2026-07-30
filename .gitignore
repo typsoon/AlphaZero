@@ -33,3 +33,7 @@ temporary_utils/
 out/
 .doit.db*
 pytorch_profile.json
+
+champions
+game_server_checkpoint
+mateusz_champions

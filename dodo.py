@@ -690,7 +690,15 @@ def task_benchmark_batch_size():
 
 def task_run_inference_server():
     """Run the inference server directly from the terminal."""
+    from dodo_profile import _merge_params_file
+
     inference_bin = BUILD_DIR / "inference_server" / "inference_server"
+    # mcts_simulations is training_params/*.json's name for search depth;
+    # everything else this task cares about (mcts_batch_size,
+    # chess_encoder_history, use_gumbel_search, max_num_considered_actions,
+    # full_search_probability, fast_mcts_simulations) already matches its
+    # JSON key 1:1, so only this one entry needs remapping.
+    _INFERENCE_JSON_FIELD_MAP = {"mcts_simulations": "mcts_search_depth"}
 
     def run_server(
         network_path,
@@ -704,7 +712,21 @@ def task_run_inference_server():
         max_num_considered_actions,
         full_search_probability,
         fast_mcts_simulations,
+        params_file,
     ):
+        p = _merge_params_file(params_file, locals(), _INFERENCE_JSON_FIELD_MAP)
+        network_path = p["network_path"]
+        game = p["game"]
+        device = p["device"]
+        socket = p["socket"]
+        mcts_search_depth = p["mcts_search_depth"]
+        mcts_batch_size = p["mcts_batch_size"]
+        chess_encoder_history = p["chess_encoder_history"]
+        use_gumbel_search = p["use_gumbel_search"]
+        max_num_considered_actions = p["max_num_considered_actions"]
+        full_search_probability = p["full_search_probability"]
+        fast_mcts_simulations = p["fast_mcts_simulations"]
+
         network_path = resolve_network_path(network_path, game)
         cmd = (
             f"{inference_bin} --network-path {network_path} --game {game}"
@@ -810,6 +832,18 @@ def task_run_inference_server():
                 "default": 0,
                 "help": "Simulation count for the \"fast\" branch above, only "
                 "used when --full-search-probability < 1.0",
+            },
+            {
+                "name": "params_file",
+                "long": "params_file",
+                "type": str,
+                "default": "",
+                "help": "JSON file with any of: mcts_simulations (-> "
+                "mcts_search_depth), mcts_batch_size, chess_encoder_history, "
+                "use_gumbel_search, max_num_considered_actions, "
+                "full_search_probability, fast_mcts_simulations. A full "
+                "training_params/*.json works directly (other keys ignored); "
+                "CLI flags win over file values.",
             },
         ],
         "task_dep": ["build"],
