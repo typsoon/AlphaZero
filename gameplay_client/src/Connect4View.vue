@@ -699,7 +699,10 @@ onUnmounted(() => {
         <button
           class="btn"
           :class="{ primary: currentMode === 'setup' }"
-          @click="currentMode = 'setup'"
+          @click="
+            currentMode = 'setup';
+            fetchAgents();
+          "
         >
           Game Setup
         </button>

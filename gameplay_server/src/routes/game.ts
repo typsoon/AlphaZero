@@ -72,6 +72,23 @@ async function resolveAgentSocket(
   return null;
 }
 
+/**
+ * True if `agentDir` (a .../<game>/<agentName> directory) still contains at
+ * least one .sock file. The C++ inference server's SocketPathGuard removes
+ * its own socket file on a clean stop/restart, but never the now-empty
+ * parent directory - without this check, /agents would keep listing an
+ * agent forever after its server was stopped, since it only looked at
+ * directory existence, not whether a live socket was actually inside.
+ */
+async function hasLiveSocket(agentDir: string): Promise<boolean> {
+  try {
+    const entries = await fs.readdir(agentDir);
+    return entries.some((e) => e.endsWith('.sock'));
+  } catch {
+    return false;
+  }
+}
+
 const subscriptions = new Map<string, Set<WebSocket>>();
 
 export function broadcastState(gameId: string, state: Record<string, unknown>) {
@@ -114,18 +131,25 @@ export default async function gameRoutes(server: FastifyInstance) {
                 withFileTypes: true,
               });
               for (const f of subFiles) {
-                if (f.isDirectory()) agents.add(f.name);
+                if (f.isDirectory() && (await hasLiveSocket(path.join(gameDir, f.name)))) {
+                  agents.add(f.name);
+                }
               }
             } else {
               const games = await fs.readdir(fullDir, { withFileTypes: true });
               for (const g of games) {
                 if (g.isDirectory()) {
-                  const subFiles = await fs.readdir(
-                    path.join(fullDir, g.name),
-                    { withFileTypes: true },
-                  );
+                  const gameDir = path.join(fullDir, g.name);
+                  const subFiles = await fs.readdir(gameDir, {
+                    withFileTypes: true,
+                  });
                   for (const f of subFiles) {
-                    if (f.isDirectory()) agents.add(f.name);
+                    if (
+                      f.isDirectory() &&
+                      (await hasLiveSocket(path.join(gameDir, f.name)))
+                    ) {
+                      agents.add(f.name);
+                    }
                   }
                 }
               }

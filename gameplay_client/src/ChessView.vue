@@ -902,8 +902,12 @@ async function fetchAgents() {
     if (data.status === 'ok') {
       availableAgents.value = data.agents;
       if (availableAgents.value.length > 0) {
-        p2Agent.value = availableAgents.value[0];
-        editorAgent.value = availableAgents.value[0];
+        if (!availableAgents.value.includes(p2Agent.value)) {
+          p2Agent.value = availableAgents.value[0];
+        }
+        if (!availableAgents.value.includes(editorAgent.value)) {
+          editorAgent.value = availableAgents.value[0];
+        }
       }
     }
   } catch (e) {
@@ -1197,7 +1201,10 @@ async function resign(): Promise<void> {
         <button
           class="btn"
           :class="{ primary: currentMode === 'setup' }"
-          @click="currentMode = 'setup'"
+          @click="
+            currentMode = 'setup';
+            fetchAgents();
+          "
         >
           Game Setup
         </button>
