@@ -1,0 +1,9 @@
+{
+  "game": "chess",
+  "mcts_batch_size": 16,
+  "mcts_simulations": 256,
+  "use_gumbel_search": true,
+  "max_num_considered_actions": 16,
+  "full_search_probability": 1,
+  "chess_encoder_history": 4
+}
