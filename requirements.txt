@@ -5,6 +5,7 @@ torch==2.13.0; python_version >= "3.14"
 torch-tensorrt; python_version < "3.14"
 onnx
 tensorrt
+safetensors
 tqdm==4.67.1
 numpy==2.1.3
 platformdirs

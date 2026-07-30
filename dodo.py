@@ -700,6 +700,10 @@ def task_run_inference_server():
         mcts_search_depth,
         mcts_batch_size,
         chess_encoder_history,
+        use_gumbel_search,
+        max_num_considered_actions,
+        full_search_probability,
+        fast_mcts_simulations,
     ):
         network_path = resolve_network_path(network_path, game)
         cmd = (
@@ -712,6 +716,18 @@ def task_run_inference_server():
         # chess-only; only pass when a history encoder is requested.
         if game == "chess" and chess_encoder_history:
             cmd += f" --chess-encoder-history {chess_encoder_history}"
+        # The remaining flags mirror training_params/*.json's self-play search
+        # config (mcts_simulations/mcts_batch_size above already do) - only
+        # passed when they'd change the binary's own defaults, so the command
+        # line stays uncluttered for the common case.
+        if use_gumbel_search:
+            cmd += " --use-gumbel-search"
+        if max_num_considered_actions != 16:
+            cmd += f" --max-num-considered-actions {max_num_considered_actions}"
+        if full_search_probability != 1.0:
+            cmd += f" --full-search-probability {full_search_probability}"
+        if fast_mcts_simulations:
+            cmd += f" --fast-mcts-simulations {fast_mcts_simulations}"
         return run_protected(cmd)
 
     return {
@@ -760,6 +776,40 @@ def task_run_inference_server():
                 "type": int,
                 "default": 0,
                 "help": "Chess only: 0 = 19-plane v1; 1/4/8 = history encoder",
+            },
+            {
+                "name": "use_gumbel_search",
+                "long": "use-gumbel-search",
+                "type": bool,
+                "default": False,
+                "help": "Use Gumbel-Top-k root sampling instead of plain-PUCT "
+                "search (matches training_params/*.json's use_gumbel_search)",
+            },
+            {
+                "name": "max_num_considered_actions",
+                "long": "max-num-considered-actions",
+                "type": int,
+                "default": 16,
+                "help": "Gumbel-Top-k candidate set size, only used with "
+                "--use-gumbel-search",
+            },
+            {
+                "name": "full_search_probability",
+                "long": "full-search-probability",
+                "type": float,
+                "default": 1.0,
+                "help": "Fraction of requests using the full mcts-search-depth; "
+                "the rest use --fast-mcts-simulations (default 1.0 = always full, "
+                "the sensible choice for serving; self-play uses lower values to "
+                "make training games cheaper)",
+            },
+            {
+                "name": "fast_mcts_simulations",
+                "long": "fast-mcts-simulations",
+                "type": int,
+                "default": 0,
+                "help": "Simulation count for the \"fast\" branch above, only "
+                "used when --full-search-probability < 1.0",
             },
         ],
         "task_dep": ["build"],

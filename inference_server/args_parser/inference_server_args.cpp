@@ -64,6 +64,15 @@ void print_inference_server_usage(const char *program_name) {
               << "  --mcts-search-depth <depth> MCTS search depth (default: 800)\n"
               << "  --chess-encoder-history <N> Chess only: 0 (default) = 19-plane "
                  "ChessEncoderV1; 1/4/8 = ChessEncoderV2History(N) for a history-encoder net\n"
+              << "  --use-gumbel-search     Use search_gumbel() (Gumbel-Top-k root "
+                 "sampling) instead of plain-PUCT search() (default: off)\n"
+              << "  --max-num-considered-actions <N> Gumbel-Top-k candidate set size, "
+                 "only used with --use-gumbel-search (default: 16)\n"
+              << "  --full-search-probability <p> Fraction of requests using the full "
+                 "mcts-search-depth; the rest use --fast-mcts-simulations (default: 1.0, "
+                 "i.e. always full)\n"
+              << "  --fast-mcts-simulations <N> Simulation count for the \"fast\" branch "
+                 "above, only used when --full-search-probability < 1.0\n"
               << "  -h, --help              Show this help message\n";
 }
 
@@ -122,6 +131,47 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
             if (args.chess_encoder_history != 0 && args.chess_encoder_history != 1 &&
                 args.chess_encoder_history != 4 && args.chess_encoder_history != 8) {
                 error = "--chess-encoder-history must be 0 (default 19-plane), 1, 4, or 8";
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--use-gumbel-search") {
+            args.use_gumbel_search = true;
+            continue;
+        }
+        std::string max_considered_str;
+        if (read_option_value(i, argc, argv, arg, "--max-num-considered-actions",
+                              max_considered_str, error)) {
+            try {
+                args.max_num_considered_actions = std::stoi(max_considered_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --max-num-considered-actions: " + max_considered_str;
+                return false;
+            }
+            continue;
+        }
+        std::string full_search_prob_str;
+        if (read_option_value(i, argc, argv, arg, "--full-search-probability",
+                              full_search_prob_str, error)) {
+            try {
+                args.full_search_probability = std::stof(full_search_prob_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --full-search-probability: " + full_search_prob_str;
+                return false;
+            }
+            if (args.full_search_probability < 0.0f || args.full_search_probability > 1.0f) {
+                error = "--full-search-probability must be between 0.0 and 1.0";
+                return false;
+            }
+            continue;
+        }
+        std::string fast_sims_str;
+        if (read_option_value(i, argc, argv, arg, "--fast-mcts-simulations", fast_sims_str,
+                              error)) {
+            try {
+                args.fast_mcts_simulations = std::stoi(fast_sims_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --fast-mcts-simulations: " + fast_sims_str;
                 return false;
             }
             continue;

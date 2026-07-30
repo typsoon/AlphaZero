@@ -13,6 +13,28 @@ struct InferenceServerArgs {
     // Chess only: 0 = default 19-plane ChessEncoderV1; N in {1,4,8} =
     // ChessEncoderV2History(N) for a history-encoder net.
     int chess_encoder_history{0};
+    // The remaining fields mirror training_params/*.json's self-play search
+    // config (see AlphaZeroTrainer's self_play_and_train_loop), letting the
+    // server reproduce the exact search behavior training data was generated
+    // with, rather than always using the plain-PUCT search() path regardless
+    // of what a checkpoint was actually trained under. Defaults preserve the
+    // server's original behavior (plain PUCT, always the full
+    // mcts_search_depth) when none of these are passed.
+    bool use_gumbel_search{false};
+    // search_gumbel's Gumbel-Top-k candidate set size (m in the paper) - only
+    // consulted when use_gumbel_search is set.
+    int max_num_considered_actions{16};
+    // Fraction of requests that get the full mcts_search_depth; the rest use
+    // fast_mcts_simulations instead. 1.0 (default) = always full search, the
+    // sensible default for serving real moves - self-play uses this to make
+    // most training games cheaper, which isn't a reason to shortchange an
+    // actual request unless explicitly asked to reproduce that behavior.
+    float full_search_probability{1.0f};
+    // Simulation count used for the "fast" branch above. Only meaningful when
+    // full_search_probability < 1.0; 0 (default, i.e. unset) falls back to
+    // mcts_search_depth so a stray fast_mcts_simulations=0 can't silently
+    // zero out the search.
+    int fast_mcts_simulations{0};
 };
 
 void print_inference_server_usage(const char *program_name);

@@ -13,11 +13,15 @@ int run_server(const InferenceServerArgs &args) {
 
     std::shared_ptr<ModelWrapper> wrapper;
     if (args.game == "chess") {
-        wrapper = create_chess_model_wrapper(args.network_path, args.device, args.mcts_search_depth,
-                                             args.mcts_batch_size, args.chess_encoder_history);
+        wrapper = create_chess_model_wrapper(
+            args.network_path, args.device, args.mcts_search_depth, args.mcts_batch_size,
+            args.chess_encoder_history, args.use_gumbel_search, args.max_num_considered_actions,
+            args.full_search_probability, args.fast_mcts_simulations);
     } else {
-        wrapper = create_connect4_model_wrapper(args.network_path, args.device,
-                                                args.mcts_search_depth, args.mcts_batch_size);
+        wrapper = create_connect4_model_wrapper(
+            args.network_path, args.device, args.mcts_search_depth, args.mcts_batch_size,
+            args.use_gumbel_search, args.max_num_considered_actions, args.full_search_probability,
+            args.fast_mcts_simulations);
     }
 
     set_up_and_run_server<ModelWrapper, SchemaValidator>(args.socket, wrapper,
