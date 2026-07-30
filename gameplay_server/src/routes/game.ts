@@ -226,7 +226,11 @@ export default async function gameRoutes(server: FastifyInstance) {
           dbGame.gameType === 'chess'
             ? (game as any).get_inference_state()
             : toCppInferenceGameState((game.get_board_state() as any).board);
-        const aiMove = await agent.act(aiGameState);
+        const {
+          move: aiMove,
+          policy: aiPolicy,
+          value: aiValue,
+        } = await agent.act(aiGameState);
         game.step(aiMove);
 
         const history = dbGame.history;
@@ -287,6 +291,12 @@ export default async function gameRoutes(server: FastifyInstance) {
           status: 'ok',
           surrender_winner: winner,
           win_reason: winReason,
+          // The AI's own evaluation of the position it just moved from -
+          // lets the client show a "why did it play that" panel. Absent on
+          // every other broadcastState() call site (human moves, surrender,
+          // rewind), which the client treats as "clear the eval panel".
+          policy: aiPolicy,
+          value: aiValue,
         };
         broadcastState(id, newState);
 

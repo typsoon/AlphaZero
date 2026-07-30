@@ -61,7 +61,9 @@ describe('AlphaZeroAgent', () => {
     mockRes.emit('end');
 
     const result = await actPromise;
-    expect(result).toBe(1); // Index of highest value (0.8)
+    expect(result.move).toBe(1); // Index of highest value (0.8)
+    expect(result.policy).toEqual([0.1, 0.8, 0.05, 0.05]);
+    expect(result.value).toBe(0.5);
   });
 
   it('should parse sparse policy arrays correctly', async () => {
@@ -80,6 +82,7 @@ describe('AlphaZeroAgent', () => {
     mockRes.emit('end');
 
     const result = await actPromise;
-    expect(result).toBe(42); // Index with highest value (0.9)
+    expect(result.move).toBe(42); // Index with highest value (0.9)
+    expect(result.value).toBe(-0.1);
   });
 });

@@ -243,6 +243,13 @@ const editorEvalError = ref<string | null>(null);
 const editorEvalValue = ref<number | null>(null);
 const editorEvalMoves = ref<{ uci: string; prob: number }[]>([]);
 
+// The last AI move's own evaluation of the position it moved from, pushed
+// over the game websocket alongside its move (see server routes/game.ts's
+// playAITurn). null/[] whenever the last broadcastState had no policy/value
+// (human moves, surrender, rewind).
+const liveEvalValue = ref<number | null>(null);
+const liveEvalMoves = ref<{ uci: string; prob: number }[]>([]);
+
 const PROMO_SUFFIX: Record<number, string> = {
   0: '',
   1: '=Q',
@@ -259,6 +266,29 @@ function decodeActionToUci(action: number): string {
   const fromSq = rowColToSquare(Math.floor(from / 8), from % 8);
   const toSq = rowColToSquare(Math.floor(to / 8), to % 8);
   return `${fromSq}${toSq}${PROMO_SUFFIX[promo]}`;
+}
+
+// Sparse ({index,value}[]) or dense (number[]) policy -> top-8 UCI moves by
+// probability, decoded via decodeActionToUci. Shared by the editor's
+// "Evaluate Position" panel and the live-game AI-move eval panel.
+function decodePolicyToMoves(
+  policy: number[] | { index: number; value: number }[],
+): { uci: string; prob: number }[] {
+  let entries: { action: number; prob: number }[];
+  if (policy.length > 0 && typeof policy[0] === 'object') {
+    entries = (policy as { index: number; value: number }[]).map((e) => ({
+      action: e.index,
+      prob: e.value,
+    }));
+  } else {
+    entries = (policy as number[])
+      .map((prob, action) => ({ action, prob }))
+      .filter((e) => e.prob > 1e-6);
+  }
+  entries.sort((a, b) => b.prob - a.prob);
+  return entries
+    .slice(0, 8)
+    .map((e) => ({ uci: decodeActionToUci(e.action), prob: e.prob }));
 }
 
 async function evaluateEditorPosition() {
@@ -286,23 +316,7 @@ async function evaluateEditorPosition() {
       throw new Error(data.message || 'Evaluation failed');
     }
     editorEvalValue.value = data.value ?? 0;
-
-    const policy = data.policy as number[] | { index: number; value: number }[];
-    let entries: { action: number; prob: number }[];
-    if (policy.length > 0 && typeof policy[0] === 'object') {
-      entries = (policy as { index: number; value: number }[]).map((e) => ({
-        action: e.index,
-        prob: e.value,
-      }));
-    } else {
-      entries = (policy as number[])
-        .map((prob, action) => ({ action, prob }))
-        .filter((e) => e.prob > 1e-6);
-    }
-    entries.sort((a, b) => b.prob - a.prob);
-    editorEvalMoves.value = entries
-      .slice(0, 8)
-      .map((e) => ({ uci: decodeActionToUci(e.action), prob: e.prob }));
+    editorEvalMoves.value = decodePolicyToMoves(data.policy);
   } catch (e: any) {
     editorEvalError.value = e.message || String(e);
   } finally {
@@ -997,6 +1011,13 @@ function connectWebSocket() {
       } else if (isTerminal.value) {
         statusMsg.value = 'Game Over.';
       }
+      if (msg.data.policy) {
+        liveEvalValue.value = msg.data.value ?? 0;
+        liveEvalMoves.value = decodePolicyToMoves(msg.data.policy);
+      } else {
+        liveEvalValue.value = null;
+        liveEvalMoves.value = [];
+      }
     }
   };
 }
@@ -1389,6 +1410,33 @@ async function resign(): Promise<void> {
 
       <div class="chess-board-wrap">
         <div ref="boardContainer" class="chess-board"></div>
+      </div>
+
+      <!-- Last AI move's evaluation (policy/value pushed alongside its move) -->
+      <div v-if="liveEvalValue !== null" class="eval-panel">
+        <div
+          class="eval-value-line"
+          :class="{ pos: liveEvalValue > 0, neg: liveEvalValue < 0 }"
+        >
+          AI eval: {{ liveEvalValue.toFixed(4) }} (mover's perspective)
+        </div>
+        <ol class="eval-move-list">
+          <li v-for="m in liveEvalMoves" :key="m.uci">
+            <span class="eval-move-uci">{{ m.uci }}</span>
+            <span class="eval-bar-wrap"
+              ><span
+                class="eval-bar"
+                :style="{
+                  width:
+                    (liveEvalMoves[0]
+                      ? (m.prob / liveEvalMoves[0].prob) * 100
+                      : 0) + '%',
+                }"
+              ></span
+            ></span>
+            <span class="eval-move-pct">{{ (m.prob * 100).toFixed(1) }}%</span>
+          </li>
+        </ol>
       </div>
 
       <!-- Promotion Modal -->
