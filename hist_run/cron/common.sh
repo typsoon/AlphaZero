@@ -2,7 +2,14 @@
 # Shared config for the history-run scheduled loop tasks (archive / arena /
 # puzzle). Sourced by each task script.
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-source /mnt/storage/users/z1201659/.14_ml_venv/bin/activate
+# Machine-local overrides (venv paths differ per machine) - see .env.example.
+# Defaults below match this script's original machine, so behavior is
+# unchanged unless a .env is present.
+set -a
+[ -f "$REPO/.env" ] && source "$REPO/.env"
+set +a
+VENV_ACTIVATE="${ALPHAZERO_HIST_VENV_ACTIVATE:-/mnt/storage/users/z1201659/.14_ml_venv/bin/activate}"
+source "$VENV_ACTIVATE"
 # torch 2.13.0+cu126 gets its CUDA runtime from pip nvidia-* packages (not
 # torch/lib), and the 2026-07-26 OS upgrade removed /opt/cuda (system now has
 # CUDA 13, wrong major for our cu12 binaries). So the C++ tools (run_arena,
@@ -10,7 +17,7 @@ source /mnt/storage/users/z1201659/.14_ml_venv/bin/activate
 # libtorch* and libcudart.so.12. torch_tensorrt has no cp314 wheel; TensorRT
 # itself resolves via RPATH baked into the binaries (see
 # [[native-tensorrt-engine-loading]]), no LD_LIBRARY_PATH entry needed.
-VENV_SP=/mnt/storage/users/z1201659/.14_ml_venv/lib/python3.14/site-packages
+VENV_SP="${ALPHAZERO_HIST_VENV_SITE_PACKAGES:-/mnt/storage/users/z1201659/.14_ml_venv/lib/python3.14/site-packages}"
 NVIDIA_LIBS=$(printf '%s:' "$VENV_SP"/nvidia/*/lib)
 export LD_LIBRARY_PATH="$VENV_SP/torch/lib:${NVIDIA_LIBS}$LD_LIBRARY_PATH"
 

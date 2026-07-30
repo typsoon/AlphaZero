@@ -29,6 +29,25 @@ def main():
         "value. Defaults to AlphaZeroNetwork.tensorrt_and_save_network's own "
         "default if not set.",
     )
+    parser.add_argument(
+        "--checkpoint_dir",
+        type=str,
+        default="checkpoints",
+        help="Root directory containing per-game checkpoint subdirectories. "
+        "Defaults to 'checkpoints'.",
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default=None,
+        choices=["torch_tensorrt", "onnx"],
+        help="Compilation backend to pass to tensorrt_and_save_network. "
+        "'torch_tensorrt' (default) produces a TorchScript-wrapped .pt_trt "
+        "loaded via libtorch; 'onnx' produces a raw TensorRT engine (faster "
+        "to compile, needs no torch_tensorrt, but must be loaded by a "
+        "TensorRT runtime, not torch.jit.load). Defaults to "
+        "AlphaZeroNetwork.tensorrt_and_save_network's own default if not set.",
+    )
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO,
@@ -40,9 +59,9 @@ def main():
     if not torch.cuda.is_available():
         logger.warning("CUDA is not available. Only scripted models will be generated.")
 
-    checkpoints_dir = Path("checkpoints")
+    checkpoints_dir = Path(args.checkpoint_dir)
     if not checkpoints_dir.exists():
-        logger.info("No checkpoints directory found.")
+        logger.info("No checkpoints directory found: %s", checkpoints_dir)
         return
 
     # Iterate over all game directories in checkpoints
@@ -83,6 +102,8 @@ def main():
                             kwargs["max_first_dim_of_input"] = args.max_first_dim
                         if args.opt_first_dim is not None:
                             kwargs["opt_first_dim_of_input"] = args.opt_first_dim
+                        if args.backend is not None:
+                            kwargs["backend"] = args.backend
                         network.tensorrt_and_save_network(trt_path, **kwargs)
                     except Exception as e:
                         logger.error(

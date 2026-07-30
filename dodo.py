@@ -1,3 +1,4 @@
+import os
 import shutil
 import sys
 from python.utils import (
@@ -5,11 +6,23 @@ from python.utils import (
     BUILD_DIR,
     SUPPORTED_GAMES,
     NETWORK_PARAM,
+    load_dotenv,
     resolve_network_path,
     run_protected,
 )
 from doit_systemd import *  # noqa: F403
 from dodo_profile import *  # noqa: F403
+
+load_dotenv()
+
+# Machine-local paths, overridable via .env (see .env.example) or real env
+# vars - defaults below match the original z1201659 training machine's setup,
+# so behavior is unchanged there unless it also opts into a .env file.
+CUDA_COMPILER = os.environ.get("ALPHAZERO_CUDA_COMPILER", "/usr/local/cuda/bin/nvcc")
+TENSORRT_INCLUDE_DIR = os.environ.get(
+    "ALPHAZERO_TENSORRT_INCLUDE_DIR",
+    "/mnt/storage/users/z1201659/tensorrt_sdk/TensorRT-11.1.0.106/include",
+)
 
 DOIT_CONFIG = {
     "verbosity": 2,
@@ -295,16 +308,16 @@ def task_build():
             f"cmake -S {PROJ_ROOT} -B {BUILD_DIR} "
             f"-DCMAKE_BUILD_TYPE={build_type} "
             f"-DCMAKE_PREFIX_PATH=$({sys.executable} -c 'import torch; print(torch.utils.cmake_prefix_path)') "
-            f"-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc "
+            f"-DCMAKE_CUDA_COMPILER={CUDA_COMPILER} "
             # Machine-local TensorRT SDK download (NvInfer.h - pip's tensorrt
             # package ships no C++ headers). Safe to pass unconditionally: the
             # CMake logic only enables native TRT-engine loading when this
             # header set's major version matches the active venv's pip
             # tensorrt runtime major version, so it silently no-ops when
             # building against a venv on a different TensorRT major (e.g.
-            # .12_ml_venv's TRT 10.9 vs this SDK's TRT 11).
-            "-DALPHAZERO_TENSORRT_INCLUDE_DIR="
-            "/mnt/storage/users/z1201659/tensorrt_sdk/TensorRT-11.1.0.106/include "
+            # .12_ml_venv's TRT 10.9 vs this SDK's TRT 11). Both paths are
+            # overridable per-machine via .env - see .env.example.
+            f"-DALPHAZERO_TENSORRT_INCLUDE_DIR={TENSORRT_INCLUDE_DIR} "
             f"-DPython3_EXECUTABLE={sys.executable} "
             f"-DPYTHON_EXECUTABLE={sys.executable} "
             "-DBUILD_TESTS=ON "
@@ -765,12 +778,16 @@ def task_clear_db():
 def task_generate_tensorrt_models():
     """Iterate through available checkpoints and generate TensorRT scripted models."""
 
-    def run_generate(max_first_dim):
+    def run_generate(max_first_dim, backend, checkpoint_dir):
         cmd = f"{sys.executable} -m python.tools.generate_tensorrt_models"
         # Only forward an explicit override - leaving it unset lets
         # AlphaZeroNetwork.tensorrt_and_save_network use its own default.
         if max_first_dim is not None:
             cmd += f" --max_first_dim {max_first_dim}"
+        if backend is not None:
+            cmd += f" --backend {backend}"
+        if checkpoint_dir is not None:
+            cmd += f" --checkpoint_dir {checkpoint_dir}"
         return run_protected(cmd)
 
     return {
@@ -783,7 +800,23 @@ def task_generate_tensorrt_models():
                 "default": None,
                 "help": "Max first dim of input (max TensorRT batch size). Defaults to "
                 "AlphaZeroNetwork.tensorrt_and_save_network's own default if not set.",
-            }
+            },
+            {
+                "name": "backend",
+                "long": "backend",
+                "type": str,
+                "default": None,
+                "help": "Compilation backend ('torch_tensorrt' or 'onnx'). Defaults to "
+                "AlphaZeroNetwork.tensorrt_and_save_network's own default if not set.",
+            },
+            {
+                "name": "checkpoint_dir",
+                "long": "checkpoint_dir",
+                "type": str,
+                "default": None,
+                "help": "Root directory containing per-game checkpoint subdirectories. "
+                "Defaults to 'checkpoints'.",
+            },
         ],
         "verbosity": 2,
     }

@@ -18,8 +18,16 @@ cd "$(dirname "$0")/.." || exit 1
 # machine-local skill) - fragile, since a restart from a fresh shell without
 # that ambient state would break in confusing ways. Made self-contained here
 # instead, mirroring hist_run/cron/common.sh's env setup exactly.
-source /mnt/storage/users/z1201659/.14_ml_venv/bin/activate
-VENV_SP=/mnt/storage/users/z1201659/.14_ml_venv/lib/python3.14/site-packages
+# Machine-local overrides (venv paths differ per machine) - see .env.example.
+# Defaults below match this script's original machine, so behavior is
+# unchanged unless a .env is present.
+REPO="$(pwd)"
+set -a
+[ -f "$REPO/.env" ] && source "$REPO/.env"
+set +a
+VENV_ACTIVATE="${ALPHAZERO_HIST_VENV_ACTIVATE:-/mnt/storage/users/z1201659/.14_ml_venv/bin/activate}"
+source "$VENV_ACTIVATE"
+VENV_SP="${ALPHAZERO_HIST_VENV_SITE_PACKAGES:-/mnt/storage/users/z1201659/.14_ml_venv/lib/python3.14/site-packages}"
 NVIDIA_LIBS=$(printf '%s:' "$VENV_SP"/nvidia/*/lib)
 export LD_LIBRARY_PATH="$VENV_SP/torch/lib:${NVIDIA_LIBS}$LD_LIBRARY_PATH"
 # torch_tensorrt has no cp314 wheel (see [[venv-py314-cutover]]); only add its

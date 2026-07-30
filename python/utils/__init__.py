@@ -1,8 +1,32 @@
+import os
 import subprocess
 from pathlib import Path
 
 PROJ_ROOT = Path(__file__).parents[2]
 BUILD_DIR = PROJ_ROOT / "build"
+
+
+def load_dotenv(path=None):
+    """Load KEY=VALUE lines from a .env file into os.environ.
+
+    Machine-local settings (SDK paths, compiler locations, etc.) differ per
+    checkout and shouldn't be hardcoded into shared, version-controlled
+    scripts. .env is gitignored, so each machine keeps its own copy; real
+    process env vars still win (setdefault), so `FOO=bar doit build` can
+    override a .env entry without editing the file.
+    """
+    env_path = Path(path) if path is not None else PROJ_ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("\"'")
+        if key:
+            os.environ.setdefault(key, value)
 
 SUPPORTED_GAMES = (("connect4", "Connect4"), ("chess", "Chess"))
 
