@@ -547,6 +547,14 @@ let cbBoard: ChessBoardInstance | null = null;
 // castling's rook move, en passant capture, or the promoted piece type.
 let pendingOptimisticBoard: string[][] | null = null;
 
+// Touch (mobile) tap-to-move state. chessboard.js handles drags on touch, but a
+// plain tap does not reliably produce a `click` (its touch-drag intercepts it),
+// so taps are detected explicitly via touchstart/touchend below.
+let touchStartInfo: { x: number; y: number } | null = null;
+// After handling a tap we briefly ignore the synthetic mouse `click` the browser
+// still fires, so the same tap isn't processed twice.
+let suppressClickUntil = 0;
+
 /** Our internal board is a string[][] grid with row 0 = rank 8, col 0 = file a. */
 function squareToRowCol(square: string): { row: number; col: number } {
   const col = square.charCodeAt(0) - 97; // 'a' -> 0
@@ -597,8 +605,12 @@ function squareHasLegalMoves(row: number, col: number): boolean {
 function clearLegalMoveHighlights() {
   if (!boardContainer.value) return;
   $(boardContainer.value)
-    .find('.legal-move-highlight, .selected-square-highlight')
-    .removeClass('legal-move-highlight selected-square-highlight');
+    .find(
+      '.legal-move-highlight, .legal-move-capture, .selected-square-highlight',
+    )
+    .removeClass(
+      'legal-move-highlight legal-move-capture selected-square-highlight',
+    );
 }
 
 function highlightLegalMoves(row: number, col: number) {
@@ -617,7 +629,12 @@ function highlightLegalMoves(row: number, col: number) {
     const toRow = Math.floor(actTo / 8);
     const toCol = actTo % 8;
     const square = rowColToSquare(toRow, toCol);
-    $container.find(`.square-${square}`).addClass('legal-move-highlight');
+    // A capture target is occupied, so show a ring around it (a centered dot
+    // would be hidden behind the captured piece); empty targets get the dot.
+    const occupied = (board.value[toRow]?.[toCol] ?? ' ') !== ' ';
+    $container
+      .find(`.square-${square}`)
+      .addClass(occupied ? 'legal-move-capture' : 'legal-move-highlight');
   }
 }
 
@@ -625,6 +642,50 @@ watch(selectedSquare, (sel) => {
   if (sel) highlightLegalMoves(sel.row, sel.col);
   else clearLegalMoveHighlights();
 });
+
+// Map a viewport point to our internal row/col using the board's geometry
+// (robust even while chessboard.js has a piece "lifted" over the squares, which
+// would defeat elementFromPoint). Accounts for board orientation (flip).
+function rowColFromPoint(
+  x: number,
+  y: number,
+): { row: number; col: number } | null {
+  const boardEl = boardContainer.value?.querySelector(
+    '.board-b72b1',
+  ) as HTMLElement | null;
+  if (!boardEl) return null;
+  const rect = boardEl.getBoundingClientRect();
+  const originX = rect.left + boardEl.clientLeft; // inside the border
+  const originY = rect.top + boardEl.clientTop;
+  const w = boardEl.clientWidth;
+  const h = boardEl.clientHeight;
+  if (x < originX || x >= originX + w || y < originY || y >= originY + h) {
+    return null;
+  }
+  const file = Math.min(7, Math.floor(((x - originX) / w) * 8)); // left→right
+  const rank = Math.min(7, Math.floor(((y - originY) / h) * 8)); // top→bottom
+  const flipped = isBoardFlipped.value;
+  return { row: flipped ? 7 - rank : rank, col: flipped ? 7 - file : file };
+}
+
+function onBoardTouchStart(e: TouchEvent) {
+  const t = e.touches[0];
+  if (t) touchStartInfo = { x: t.clientX, y: t.clientY };
+}
+
+function onBoardTouchEnd(e: TouchEvent) {
+  const start = touchStartInfo;
+  touchStartInfo = null;
+  const t = e.changedTouches[0];
+  if (!start || !t) return;
+  const moved = Math.hypot(t.clientX - start.x, t.clientY - start.y);
+  if (moved > 15) return; // a drag → let chessboard.js's onDrop handle it
+  const rc = rowColFromPoint(t.clientX, t.clientY);
+  if (!rc) return;
+  e.preventDefault(); // suppress the synthetic mouse click that follows a tap
+  suppressClickUntil = Date.now() + 700;
+  handleSquareClick(rc.row, rc.col);
+}
 
 function initChessBoard() {
   if (!boardContainer.value || cbBoard) return;
@@ -674,13 +735,21 @@ function initChessBoard() {
   };
   cbBoard = ChessboardFactory(boardContainer.value, config);
 
-  // Layer click-to-move on top of chessboard.js (it has no built-in click API).
-  $(boardContainer.value).on('click', '.square-55d63', (event) => {
+  // Layer click/tap-to-move on top of chessboard.js (it has no built-in click
+  // API). Desktop uses the delegated `click`; touch devices need explicit
+  // tap handling because chessboard.js's touch-drag swallows the click.
+  const containerEl = boardContainer.value;
+  $(containerEl).on('click', '.square-55d63', (event) => {
+    if (Date.now() < suppressClickUntil) return; // a touch tap already handled it
     const square = $(event.currentTarget).attr('data-square');
     if (!square) return;
     const { row, col } = squareToRowCol(square);
     handleSquareClick(row, col);
   });
+  containerEl.addEventListener('touchstart', onBoardTouchStart, {
+    passive: true,
+  });
+  containerEl.addEventListener('touchend', onBoardTouchEnd, { passive: false });
 
   window.addEventListener('resize', onWindowResize);
 }
@@ -693,6 +762,8 @@ function destroyChessBoard() {
   window.removeEventListener('resize', onWindowResize);
   if (boardContainer.value) {
     $(boardContainer.value).off('click');
+    boardContainer.value.removeEventListener('touchstart', onBoardTouchStart);
+    boardContainer.value.removeEventListener('touchend', onBoardTouchEnd);
   }
   cbBoard?.destroy();
   cbBoard = null;
@@ -1430,10 +1501,34 @@ select {
 
 :deep(.square-55d63) {
   cursor: pointer;
+  position: relative;
 }
 
-:deep(.legal-move-highlight) {
-  box-shadow: inset 0 0 0 4px rgba(59, 130, 246, 0.55);
+/* Gray dot in the center of an empty square the selected piece can move to. */
+:deep(.legal-move-highlight)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30%;
+  height: 30%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background-color: rgba(60, 60, 60, 0.5);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Gray ring for a capture target, so the marker isn't hidden by the piece. */
+:deep(.legal-move-capture)::after {
+  content: '';
+  position: absolute;
+  inset: 4%;
+  border: 6px solid rgba(60, 60, 60, 0.5);
+  border-radius: 50%;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 5;
 }
 
 :deep(.selected-square-highlight) {

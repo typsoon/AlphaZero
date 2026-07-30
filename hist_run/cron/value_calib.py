@@ -73,6 +73,24 @@ def main():
         f"winning_mean={rec['winning_mean']} losing_mean={rec['losing_mean']} "
         f"gap={rec['calib_gap']}"
     )
+
+    # Push to TensorBoard (runs/chess_hist_eval); best-effort, never fatal.
+    tb_args = []
+    for tag, v in (
+        ("eval/value/mate_in_1_mean", m1_mean),
+        ("eval/value/winning_mean", win_mean),
+        ("eval/value/losing_mean", lose_mean),
+        ("eval/value/calib_gap", gap),
+    ):
+        if v is not None:
+            tb_args += [tag, str(v)]
+    if tb_args:
+        import subprocess
+
+        subprocess.run(
+            [sys.executable, str(Path(__file__).parent / "tb_log.py"), *tb_args],
+            check=False,
+        )
     return 0
 
 

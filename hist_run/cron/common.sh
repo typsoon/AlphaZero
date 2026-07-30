@@ -2,7 +2,24 @@
 # Shared config for the history-run scheduled loop tasks (archive / arena /
 # puzzle). Sourced by each task script.
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-export LD_LIBRARY_PATH=$(python -c "import torch_tensorrt, os; print(os.path.join(os.path.dirname(torch_tensorrt.__file__), 'lib'))"):$(python -c "import torch, os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))"):$LD_LIBRARY_PATH
+source /mnt/storage/users/z1201659/.14_ml_venv/bin/activate
+# torch 2.13.0+cu126 gets its CUDA runtime from pip nvidia-* packages (not
+# torch/lib), and the 2026-07-26 OS upgrade removed /opt/cuda (system now has
+# CUDA 13, wrong major for our cu12 binaries). So the C++ tools (run_arena,
+# inference_server) need torch/lib + every nvidia/*/lib on the path to resolve
+# libtorch* and libcudart.so.12. torch_tensorrt has no cp314 wheel; TensorRT
+# itself resolves via RPATH baked into the binaries (see
+# [[native-tensorrt-engine-loading]]), no LD_LIBRARY_PATH entry needed.
+VENV_SP=/mnt/storage/users/z1201659/.14_ml_venv/lib/python3.14/site-packages
+NVIDIA_LIBS=$(printf '%s:' "$VENV_SP"/nvidia/*/lib)
+export LD_LIBRARY_PATH="$VENV_SP/torch/lib:${NVIDIA_LIBS}$LD_LIBRARY_PATH"
+
+# .14_ml_venv uses the system python3.14 directly (no conda repoint needed,
+# unlike .12_ml_venv), so this preload isn't strictly required, but it's a
+# harmless no-op preload of the same library the system would resolve anyway
+# - kept for parity/safety.
+SYS_LIBSTDCPP=/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+[ -e "$SYS_LIBSTDCPP" ] && export LD_PRELOAD="$SYS_LIBSTDCPP${LD_PRELOAD:+:$LD_PRELOAD}"
 
 HIST_PT="$REPO/checkpoints_hist/chess/chess_AZNetwork_hist_0.pt"
 HIST_SCRIPTED="$REPO/checkpoints_hist/chess/scripted/chess_AZNetwork_hist_0.pt_scripted"

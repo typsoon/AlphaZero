@@ -127,6 +127,17 @@ def get_args():
     )
 
     parser.add_argument(
+        "--value-loss-weight",
+        type=float,
+        default=1.0,
+        help="Relative weight of the value loss vs the policy loss in the "
+        "combined training objective (loss = policy_loss + value_loss_weight * "
+        "value_loss). 1.0 is the default/previous behavior. Lower it (Leela "
+        "Chess Zero used 0.25) to regularize a value head that overfits and "
+        "drags playing strength down - see leela-zero#1480.",
+    )
+
+    parser.add_argument(
         "--residual-blocks",
         type=int,
         default=10,
@@ -549,6 +560,7 @@ if __name__ == "__main__":
             get_trainer,
             initial_lr=args.initial_lr,
             lr_lower_bound=args.lr_lower_bound,
+            value_loss_weight=args.value_loss_weight,
         ),
         loop_iterations=args.loop_iterations,
         games_in_each_iteration=args.games_in_each_iteration,

@@ -6,6 +6,105 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _onnx_to_trt_engine(
+    module,
+    in_channels,
+    height,
+    width,
+    opt_batch,
+    max_batch,
+    out_path,
+    timing_cache_path=None,
+):
+    """Compile `module` to a TensorRT engine via ONNX (torch.onnx.export ->
+    tensorrt.OnnxParser -> builder, FP16) and write the RAW serialized engine to
+    out_path. Unlike the torch_tensorrt path this produces a plain TRT engine
+    (not a TorchScript-wrapped module), so its output must be loaded by a
+    TensorRT runtime, not torch.jit.load. Needs `onnx` and `tensorrt`, but NOT
+    torch_tensorrt. If timing_cache_path is given the cache is loaded before and
+    rewritten after the build - a warm cache makes repeated builds of the same
+    architecture (e.g. the per-iteration recompile) much faster.
+
+    TRT 10.x and earlier ("weak typing") pick FP16 kernels via a builder flag on
+    an FP32 graph. TRT 11 removed that flag entirely - networks are always
+    "strongly typed" and take precision straight from the ONNX graph's own
+    tensor dtypes, so FP16 has to come from exporting an actual FP16 module. The
+    version check below picks whichever the installed `tensorrt` supports, so
+    this one function works unchanged across both TRT generations. The
+    strongly-typed branch exports a deep copy cast to .half() rather than the
+    live `module` in place, since `module` is normally the trainer's actual
+    in-memory network and mutating its dtype would desync it from its
+    optimizer's per-parameter state on the next training step."""
+    import copy
+    import os
+
+    import tensorrt as trt
+
+    weak_typing = hasattr(trt.BuilderFlag, "FP16")
+
+    device = next(module.parameters()).device
+    export_module = module if weak_typing else copy.deepcopy(module).half()
+    dummy = torch.randn(
+        opt_batch,
+        in_channels,
+        height,
+        width,
+        device=device,
+        dtype=torch.float32 if weak_typing else torch.float16,
+    )
+    onnx_path = fspath(out_path) + ".onnx"
+    torch.onnx.export(
+        export_module,
+        dummy,
+        onnx_path,
+        input_names=["input"],
+        output_names=["policy", "value"],
+        dynamic_axes={"input": {0: "b"}, "policy": {0: "b"}, "value": {0: "b"}},
+        opset_version=17,
+        dynamo=False,
+    )
+    logger = trt.Logger(trt.Logger.WARNING)
+    builder = trt.Builder(logger)
+    if weak_typing:
+        net = builder.create_network()
+    else:
+        net = builder.create_network(
+            1 << int(trt.NetworkDefinitionCreationFlag.STRONGLY_TYPED)
+        )
+    parser = trt.OnnxParser(net, logger)
+    if not parser.parse(open(onnx_path, "rb").read()):
+        errs = "\n  ".join(str(parser.get_error(i)) for i in range(parser.num_errors))
+        raise RuntimeError("ONNX->TRT parse failed:\n  " + errs)
+    cfg = builder.create_builder_config()
+    if weak_typing:
+        cfg.set_flag(trt.BuilderFlag.FP16)
+    prof = builder.create_optimization_profile()
+    prof.set_shape(
+        "input",
+        (1, in_channels, height, width),
+        (opt_batch, in_channels, height, width),
+        (max_batch, in_channels, height, width),
+    )
+    cfg.add_optimization_profile(prof)
+    tcache = None
+    if timing_cache_path is not None:
+        data = (
+            open(timing_cache_path, "rb").read()
+            if os.path.exists(timing_cache_path)
+            else b""
+        )
+        tcache = cfg.create_timing_cache(data)
+        cfg.set_timing_cache(tcache, ignore_mismatch=False)
+    serialized = builder.build_serialized_network(net, cfg)
+    if serialized is None:
+        raise RuntimeError("TRT build (build_serialized_network) returned None")
+    if tcache is not None:
+        with open(timing_cache_path, "wb") as f:
+            f.write(tcache.serialize())
+    with open(fspath(out_path), "wb") as f:
+        f.write(bytes(serialized))
+
+
 class ResidualBlock(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
@@ -98,11 +197,19 @@ class AlphaZeroNetwork(nn.Module):
         scripted_model.save(fspath(path))
 
     def tensorrt_and_save_network(
-        self, path: PathLike, max_first_dim_of_input=4096, opt_first_dim_of_input=1024
+        self,
+        path: PathLike,
+        max_first_dim_of_input=4096,
+        opt_first_dim_of_input=1024,
+        backend: str = "torch_tensorrt",
+        timing_cache_path=None,
     ):
-        # This has to be imported in order to load tensorrt networks
-        import torch_tensorrt  # noqa: F811
-
+        # backend: "torch_tensorrt" (default) compiles the TorchScript IR into a
+        # TorchScript-wrapped .pt_trt that the C++ inference server loads via
+        # libtorch. "onnx" exports to ONNX and builds a RAW serialized TRT engine
+        # (faster to compile, esp. with a warm timing_cache_path, and needs no
+        # torch_tensorrt) - but its output must be loaded by a TensorRT runtime,
+        # not torch.jit.load. See _onnx_to_trt_engine.
         # TensorRT compilation requires eval mode and cuda. Restore the
         # caller's original device/mode afterward, even on failure - this gets
         # called mid-training on the live model (e.g. from
@@ -118,6 +225,24 @@ class AlphaZeroNetwork(nn.Module):
             self.eval()
             if not next(self.parameters()).is_cuda:
                 self.cuda()
+
+            if backend == "onnx":
+                _onnx_to_trt_engine(
+                    self,
+                    self.conv_in.in_channels,
+                    self._height,
+                    self._width,
+                    opt_first_dim_of_input,
+                    max_first_dim_of_input,
+                    path,
+                    timing_cache_path=timing_cache_path,
+                )
+                return
+            if backend != "torch_tensorrt":
+                raise ValueError(
+                    f"unknown backend {backend!r} (use 'torch_tensorrt' or 'onnx')"
+                )
+            import torch_tensorrt  # noqa: F811
 
             # We need to provide input shape constraints for dynamic batch sizes.
             # DynamicBatcher's actual batch size isn't bounded by wait_for_count
@@ -168,7 +293,9 @@ class AlphaZeroNetwork(nn.Module):
             # produces the tighter/faster TRT engine, so keep it.
             scripted_model = torch.jit.script(self)
             # Dedicate total VRAM minus a 5GB safety buffer for PyTorch/OS (min 1GB)
-            dyn_workspace = max(1 << 30, torch.cuda.get_device_properties(0).total_memory - (5 << 30))
+            dyn_workspace = max(
+                1 << 30, torch.cuda.get_device_properties(0).total_memory - (5 << 30)
+            )
             trt_model = torch_tensorrt.compile(
                 scripted_model,
                 inputs=inputs,
@@ -369,6 +496,43 @@ class ChessAzV2Network(nn.Module):
         self.register_buffer("_map_white", map_white)
         self.register_buffer("_map_black", map_black)
 
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        """Deep-ResNet-from-scratch initialization (not from the AlphaZero papers,
+        which never specify one - this follows the standard recipe used by strong
+        open engines like KataGo/Leela): He-normal on ReLU convs/linears, then two
+        corrections for a 12-block tower starting cold:
+          * residual-identity init - zero the last BN gamma AND the SE additive
+            branch (se_expand) in every block, so each SeResidualBlock starts as
+            an exact identity map (X + scale*Y + bias with Y=0 and bias=0);
+          * small-init the policy/value heads so early logits are near-uniform,
+            avoiding a confidently-miscalibrated value head at step 0.
+        Only affects freshly-built networks; loading a checkpoint overwrites all
+        of this via state_dict, so existing nets are unchanged."""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity="relu")
+                nn.init.zeros_(m.bias)
+        # Residual-identity: each block contributes scale*Y + bias to X; zeroing
+        # bn2's gamma makes Y=0 and zeroing se_expand makes the additive bias 0.
+        for block in self.blocks:
+            nn.init.zeros_(block.bn2.weight)
+            nn.init.zeros_(block.se_expand.weight)
+            nn.init.zeros_(block.se_expand.bias)
+        # Near-uniform heads at init (policy_out and the WDL value_fc2).
+        nn.init.normal_(self.policy_out.weight, std=0.01)
+        nn.init.zeros_(self.policy_out.bias)
+        nn.init.normal_(self.value_fc2.weight, std=0.01)
+        nn.init.zeros_(self.value_fc2.bias)
+
     def _heads(self, X) -> Tuple[torch.Tensor, torch.Tensor]:
         """Runs the trunk and both heads: flat policy logits [B, 20480]
         (engine action ids) and raw WDL logits [B, 3]."""
@@ -428,14 +592,18 @@ class ChessAzV2Network(nn.Module):
         scripted_model.save(fspath(path))
 
     def tensorrt_and_save_network(
-        self, path: PathLike, max_first_dim_of_input=4096, opt_first_dim_of_input=1024
+        self,
+        path: PathLike,
+        max_first_dim_of_input=4096,
+        opt_first_dim_of_input=1024,
+        backend: str = "torch_tensorrt",
+        timing_cache_path=None,
     ):
         # Same compile path and rationale as AlphaZeroNetwork's method (see the
-        # comments there, incl. the torchscript-IR-over-dynamo NB); kept
-        # separate instead of refactored so the legacy class powering the live
-        # training run stays byte-identical.
-        import torch_tensorrt  # noqa: F811
-
+        # comments there, incl. the torchscript-IR-over-dynamo NB and the
+        # "onnx" vs "torch_tensorrt" backend note); kept separate instead of
+        # refactored so the legacy class powering the live training run stays
+        # byte-identical.
         was_training = self.training
         original_device = next(self.parameters()).device
 
@@ -443,6 +611,24 @@ class ChessAzV2Network(nn.Module):
             self.eval()
             if not next(self.parameters()).is_cuda:
                 self.cuda()
+
+            if backend == "onnx":
+                _onnx_to_trt_engine(
+                    self,
+                    self.stem_conv.in_channels,
+                    self._height,
+                    self._width,
+                    opt_first_dim_of_input,
+                    max_first_dim_of_input,
+                    path,
+                    timing_cache_path=timing_cache_path,
+                )
+                return
+            if backend != "torch_tensorrt":
+                raise ValueError(
+                    f"unknown backend {backend!r} (use 'torch_tensorrt' or 'onnx')"
+                )
+            import torch_tensorrt  # noqa: F811
 
             inputs = [
                 torch_tensorrt.Input(
@@ -470,7 +656,9 @@ class ChessAzV2Network(nn.Module):
 
             scripted_model = torch.jit.script(self)
             # Dedicate total VRAM minus a 5GB safety buffer for PyTorch/OS (min 1GB)
-            dyn_workspace = max(1 << 30, torch.cuda.get_device_properties(0).total_memory - (5 << 30))
+            dyn_workspace = max(
+                1 << 30, torch.cuda.get_device_properties(0).total_memory - (5 << 30)
+            )
             trt_model = torch_tensorrt.compile(
                 scripted_model,
                 inputs=inputs,

@@ -13,6 +13,10 @@ from dodo_profile import *  # noqa: F403
 
 DOIT_CONFIG = {
     "verbosity": 2,
+    # The venv now runs on conda's python3.12 (2026-07-26 OS upgrade removed the
+    # system 3.12), which lacks the `_gdbm` extension doit's default `dbm` backend
+    # needs. sqlite3 (stdlib) is always available. See venv-py314-breakage notes.
+    "backend": "sqlite3",
 }
 
 GLOBAL_EXCLUDES = [
@@ -292,6 +296,15 @@ def task_build():
             f"-DCMAKE_BUILD_TYPE={build_type} "
             f"-DCMAKE_PREFIX_PATH=$({sys.executable} -c 'import torch; print(torch.utils.cmake_prefix_path)') "
             f"-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc "
+            # Machine-local TensorRT SDK download (NvInfer.h - pip's tensorrt
+            # package ships no C++ headers). Safe to pass unconditionally: the
+            # CMake logic only enables native TRT-engine loading when this
+            # header set's major version matches the active venv's pip
+            # tensorrt runtime major version, so it silently no-ops when
+            # building against a venv on a different TensorRT major (e.g.
+            # .12_ml_venv's TRT 10.9 vs this SDK's TRT 11).
+            "-DALPHAZERO_TENSORRT_INCLUDE_DIR="
+            "/mnt/storage/users/z1201659/tensorrt_sdk/TensorRT-11.1.0.106/include "
             f"-DPython3_EXECUTABLE={sys.executable} "
             f"-DPYTHON_EXECUTABLE={sys.executable} "
             "-DBUILD_TESTS=ON "
@@ -355,6 +368,7 @@ def task_test_cpp():
     test_replay_buffer = BUILD_DIR / "engine" / "test_replay_buffer"
     test_inference_cache = BUILD_DIR / "engine" / "test_inference_cache"
     test_resignation = BUILD_DIR / "engine" / "test_resignation"
+    test_inference_backend = BUILD_DIR / "engine" / "test_inference_backend"
     return {
         "actions": [
             with_report(f"{test_bin}"),
@@ -367,6 +381,12 @@ def task_test_cpp():
             with_report(f'CUDA_VISIBLE_DEVICES="" {test_replay_buffer}'),
             with_report(f"{test_inference_cache}"),
             with_report(f"{test_resignation}"),
+            # Needs real CUDA (unlike the above) to exercise TensorRT -
+            # test_inference_backend.cpp's main() works around the same class
+            # of CppUTest/CUDA leak-detector crash differently (thread-safe
+            # tracking + per-test ignoreAllLeaksInTest, see its comments)
+            # since disabling CUDA isn't an option for a TensorRT test.
+            with_report(f"{test_inference_backend}"),
         ],
         "task_dep": ["build"],
     }

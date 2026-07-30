@@ -1,5 +1,10 @@
-torch==2.7.1
-torch-tensorrt
+# CUDA wheels: install with --index-url https://download.pytorch.org/whl/cu126
+torch==2.7.1; python_version < "3.14"
+torch==2.13.0; python_version >= "3.14"
+# torch-tensorrt has no cp314 wheel; on 3.14 use network.py's backend="onnx" path instead.
+torch-tensorrt; python_version < "3.14"
+onnx
+tensorrt
 tqdm==4.67.1
 numpy==2.1.3
 platformdirs

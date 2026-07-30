@@ -12,28 +12,10 @@ std::string generate_uuid() {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(0, 15);
-    std::uniform_int_distribution<> dis2(8, 11);
 
     std::stringstream ss;
     ss << std::hex;
     for (int i = 0; i < 8; i++) {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (int i = 0; i < 4; i++) {
-        ss << dis(gen);
-    }
-    ss << "-4";
-    for (int i = 0; i < 3; i++) {
-        ss << dis(gen);
-    }
-    ss << "-";
-    ss << dis2(gen);
-    for (int i = 0; i < 3; i++) {
-        ss << dis(gen);
-    }
-    ss << "-";
-    for (int i = 0; i < 12; i++) {
         ss << dis(gen);
     }
     return ss.str();
@@ -78,7 +60,7 @@ void print_inference_server_usage(const char *program_name) {
               << "  --game <game>           Game name for default socket path (default: "
                  "connect4)\n"
               << "  --socket <path>         Unix socket path (default: "
-                 "/tmp/alphazero-inference-AZ123/<game>/<network_name>/<uuid>.sock)\n"
+                 "/tmp/alphazero-inference/<game>/<network_name>/<uuid>.sock)\n"
               << "  --mcts-search-depth <depth> MCTS search depth (default: 800)\n"
               << "  --chess-encoder-history <N> Chess only: 0 (default) = 19-plane "
                  "ChessEncoderV1; 1/4/8 = ChessEncoderV2History(N) for a history-encoder net\n"
@@ -157,7 +139,7 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
     if (args.socket.empty()) {
         std::filesystem::path net_path(args.network_path);
         std::string network_name = net_path.stem().string();
-        args.socket = "/tmp/alphazero-inference-AZ123/" + args.game + "/" + network_name + "/" +
+        args.socket = "/tmp/alphazero-inference/" + args.game + "/" + network_name + "/" +
                       generate_uuid() + ".sock";
     }
 

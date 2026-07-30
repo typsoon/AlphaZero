@@ -87,6 +87,16 @@ if(BUILD_TESTS)
                         PRIVATE engine CppUTest "${TORCH_LIBRARIES}")
   target_compile_definitions(test_chess_encoder_v2history
                              PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
+
+  # Links `engine` (-> `inference`), which transitively carries
+  # ALPHAZERO_NATIVE_TRT_ENGINE (see engine/inference/CMakeLists.txt) when
+  # this build has matching TensorRT SDK headers - the native-backend test in
+  # this file is only compiled in when that's defined.
+  add_executable(test_inference_backend tests/test_inference_backend.cpp)
+  target_link_libraries(test_inference_backend PRIVATE engine CppUTest
+                                                       "${TORCH_LIBRARIES}")
+  target_compile_definitions(test_inference_backend
+                             PRIVATE CPPUTEST_MEM_LEAK_DETECTION_DISABLED=1)
 endif()
 
 # ---------------------------------------------------------------------------

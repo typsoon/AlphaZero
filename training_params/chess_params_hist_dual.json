@@ -2,7 +2,7 @@
   "game": "chess",
   "games_in_each_iteration": 500,
   "mcts_batch_size": 16,
-  "mcts_simulations": 256,
+  "mcts_simulations": 400,
   "fast_mcts_simulations": 64,
   "full_search_probability": 0.5,
   "use_gumbel_search": true,
@@ -30,7 +30,7 @@
   "network_arch": "chess_v2",
   "chess_encoder_history": 4,
   "tensorrt_every": 1,
-  "replay_buffer_path": "/mnt/storage/users/z1201659/replay_buffer_hist.pt",
+  "replay_buffer_path": "replay_buffer_hist.pt",
   "replay_buffer_save_every": 20,
   "self_play_value_network": "champions/chess_AZNetwork_20260718_1432.pt_trt"
 }

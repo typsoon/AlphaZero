@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -24,12 +25,180 @@
 #ifdef ALPHAZERO_TRT_LIB_PATH
 #include <dlfcn.h>
 #endif
+#ifdef ALPHAZERO_NATIVE_TRT_ENGINE
+#include <NvInfer.h>
+#endif
 
 #include <torch/torch.h> // For torch::Tensor and device
 #include <utility>
 #include <vector>
 
 using Network = torch::jit::script::Module;
+
+// Abstracts over the two ways a checkpoint can be loaded for inference: a
+// TorchScript module (plain scripted, or torch_tensorrt-compiled - both are
+// ZIP archives loadable via torch::jit::load) or, when this binary was built
+// with TensorRT SDK headers, a raw TensorRT engine (network.py's
+// backend="onnx" output - see _onnx_to_trt_engine). DynamicBatcher talks to
+// whichever one it got through this one forward() call, so its batching/
+// pipelining logic (execute_tensor_batch below) doesn't need to know which.
+class InferenceBackend {
+  public:
+    virtual ~InferenceBackend() = default;
+    // batched is already on `device`. Returns (policy, value), also on
+    // `device` and always float32 regardless of what the backend computed
+    // internally - execute_tensor_batch's gather/D2H code assumes float32
+    // throughout, matching what the TorchScript path has always returned.
+    virtual std::pair<torch::Tensor, torch::Tensor> forward(const torch::Tensor &batched) = 0;
+};
+
+class TorchScriptInferenceBackend : public InferenceBackend {
+    std::shared_ptr<Network> network;
+    torch::jit::Method infer_method;
+
+  public:
+    explicit TorchScriptInferenceBackend(std::shared_ptr<Network> net)
+        : network(std::move(net)), infer_method(network->get_method("forward")) {}
+
+    std::pair<torch::Tensor, torch::Tensor> forward(const torch::Tensor &batched) override {
+        auto result = infer_method({batched});
+        auto outputs = result.toTuple()->elements();
+        return {outputs[0].toTensor(), outputs[1].toTensor()};
+    }
+};
+
+#ifdef ALPHAZERO_NATIVE_TRT_ENGINE
+namespace {
+class TrtLogger : public nvinfer1::ILogger {
+    void log(Severity severity, const char *msg) noexcept override {
+        // TensorRT's own INFO/VERBOSE levels are noisy per-engine-build
+        // chatter, not per-inference - only surface warnings and above.
+        if (severity <= Severity::kWARNING) {
+            spdlog::warn("[TensorRT] {}", msg);
+        }
+    }
+};
+} // namespace
+
+// Loads and runs a raw serialized TensorRT engine directly via the TensorRT
+// C++ runtime API - network.py's backend="onnx" path
+// (_onnx_to_trt_engine) produces exactly this format, which (unlike a
+// torch_tensorrt-compiled module) is not a TorchScript archive and can't go
+// through torch::jit::load.
+class TensorRTInferenceBackend : public InferenceBackend {
+    std::unique_ptr<nvinfer1::IRuntime> runtime;
+    std::unique_ptr<nvinfer1::ICudaEngine> engine;
+    std::unique_ptr<nvinfer1::IExecutionContext> context;
+    std::string input_name, policy_name, value_name;
+    torch::Device device;
+
+    static TrtLogger &logger() {
+        static TrtLogger instance;
+        return instance;
+    }
+
+    static torch::ScalarType to_torch_dtype(nvinfer1::DataType dt) {
+        switch (dt) {
+        case nvinfer1::DataType::kHALF:
+            return torch::kFloat16;
+        case nvinfer1::DataType::kINT32:
+            return torch::kInt32;
+        default:
+            return torch::kFloat32;
+        }
+    }
+
+  public:
+    TensorRTInferenceBackend(const std::string &path, torch::Device device) : device(device) {
+        c10::cuda::CUDAGuard guard(device);
+
+        std::ifstream f(path, std::ios::binary);
+        std::vector<char> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (data.empty()) {
+            throw std::runtime_error("TensorRT engine file '" + path + "' is empty or unreadable");
+        }
+
+        runtime.reset(nvinfer1::createInferRuntime(logger()));
+        if (!runtime) {
+            throw std::runtime_error("Failed to create TensorRT runtime");
+        }
+        engine.reset(runtime->deserializeCudaEngine(data.data(), data.size()));
+        if (!engine) {
+            throw std::runtime_error("Failed to deserialize TensorRT engine from '" + path + "'");
+        }
+        context.reset(engine->createExecutionContext());
+        if (!context) {
+            throw std::runtime_error("Failed to create TensorRT execution context");
+        }
+
+        // network.py's _onnx_to_trt_engine exports input_names=["input"],
+        // output_names=["policy", "value"] - bind by name rather than
+        // assuming binding order matches export order (ONNX->TRT doesn't
+        // guarantee that).
+        for (int32_t i = 0; i < engine->getNbIOTensors(); ++i) {
+            const char *name = engine->getIOTensorName(i);
+            if (engine->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT) {
+                input_name = name;
+            } else if (std::string(name) == "policy") {
+                policy_name = name;
+            } else if (std::string(name) == "value") {
+                value_name = name;
+            }
+        }
+        if (input_name.empty() || policy_name.empty() || value_name.empty()) {
+            throw std::runtime_error(
+                "TensorRT engine '" + path +
+                "' doesn't have the expected input/policy/value tensor names");
+        }
+    }
+
+    std::pair<torch::Tensor, torch::Tensor> forward(const torch::Tensor &batched_in) override {
+        c10::cuda::CUDAGuard guard(device);
+
+        auto input_dtype = to_torch_dtype(engine->getTensorDataType(input_name.c_str()));
+        torch::Tensor batched = batched_in;
+        if (batched.scalar_type() != input_dtype) {
+            batched = batched.to(input_dtype);
+        }
+        batched = batched.contiguous();
+
+        nvinfer1::Dims dims;
+        dims.nbDims = static_cast<int32_t>(batched.dim());
+        for (int64_t i = 0; i < batched.dim(); ++i) {
+            dims.d[i] = static_cast<int32_t>(batched.size(i));
+        }
+        if (!context->setInputShape(input_name.c_str(), dims)) {
+            throw std::runtime_error("TensorRT setInputShape failed for '" + input_name + "'");
+        }
+
+        auto make_output = [&](const std::string &name) {
+            auto dims_out = context->getTensorShape(name.c_str());
+            std::vector<int64_t> shape(dims_out.d, dims_out.d + dims_out.nbDims);
+            auto dtype = to_torch_dtype(engine->getTensorDataType(name.c_str()));
+            return torch::empty(shape, torch::TensorOptions().dtype(dtype).device(device));
+        };
+        auto policy_out = make_output(policy_name);
+        auto value_out = make_output(value_name);
+
+        context->setTensorAddress(input_name.c_str(), batched.data_ptr());
+        context->setTensorAddress(policy_name.c_str(), policy_out.data_ptr());
+        context->setTensorAddress(value_name.c_str(), value_out.data_ptr());
+
+        auto stream = c10::cuda::getCurrentCUDAStream(device.index());
+        if (!context->enqueueV3(stream.stream())) {
+            throw std::runtime_error("TensorRT enqueueV3 failed");
+        }
+
+        if (policy_out.scalar_type() != torch::kFloat32) {
+            policy_out = policy_out.to(torch::kFloat32);
+        }
+        if (value_out.scalar_type() != torch::kFloat32) {
+            value_out = value_out.to(torch::kFloat32);
+        }
+        return {policy_out, value_out};
+    }
+};
+#endif
 
 class DynamicBatcher {
     std::mutex mtx;
@@ -110,8 +279,7 @@ class DynamicBatcher {
     std::vector<std::shared_ptr<Task>> pending_tasks;
     int current_count = 0;
 
-    std::shared_ptr<Network> network;
-    torch::jit::Method infer_method;
+    std::shared_ptr<InferenceBackend> backend;
     torch::Device device;
 
     // Dedicated stream for our own post-inference copies/gather, so they don't land
@@ -166,15 +334,14 @@ class DynamicBatcher {
                 stream_guard.emplace(*copy_stream); // NOLINT(bugprone-unchecked-optional-access)
             }
 
-            auto result = infer_method({batched});
-            auto outputs = result.toTuple()->elements();
+            auto [policy_raw, value_raw] = backend->forward(batched);
             // .to(device) is a no-op for a well-behaved model whose outputs already
             // match the input's device. It's a real fixup for models that internally
             // construct fresh tensors without a device= arg (e.g. torch.ones(...)),
             // which silently land on the CPU default regardless of the input device -
             // without this, the gather() calls below would mismatch devices.
-            auto policy_gpu = outputs[0].toTensor().to(device);
-            auto value_gpu = outputs[1].toTensor().to(device);
+            auto policy_gpu = policy_raw.to(device);
+            auto value_gpu = value_raw.to(device);
 
             // Row lengths vary per state (each has its own legal-action count), so
             // pad to this round's max.
@@ -602,11 +769,10 @@ class DynamicBatcher {
     }
 
   public:
-    DynamicBatcher(int wait_for_count, int timeout_ms, std::shared_ptr<Network> network,
+    DynamicBatcher(int wait_for_count, int timeout_ms, std::shared_ptr<InferenceBackend> backend,
                    torch::Device device, std::shared_ptr<StateEncoder> encoder = nullptr)
-        : wait_for_count(wait_for_count), timeout_ms(timeout_ms), network(network),
-          encoder(std::move(encoder)), infer_method(network->get_method("forward")),
-          device(device) {
+        : wait_for_count(wait_for_count), timeout_ms(timeout_ms), backend(std::move(backend)),
+          encoder(std::move(encoder)), device(device) {
         worker = std::thread(&DynamicBatcher::worker_loop, this);
         gpu_executor_thread = std::thread(&DynamicBatcher::gpu_executor_loop, this);
     }
@@ -751,37 +917,74 @@ vector<inference_result> NetworkInferer::infer(const vector<const GameState *> &
     return results;
 }
 
-static std::shared_ptr<Network> get_network_func(std::string network_file_path,
-                                                 torch::Device device) {
-    if (std::filesystem::exists(network_file_path)) {
-        try {
-#ifdef ALPHAZERO_TRT_LIB_PATH
-            static const bool trt_runtime_loaded = []() {
-                void *handle = dlopen(ALPHAZERO_TRT_LIB_PATH, RTLD_NOW | RTLD_GLOBAL);
-                if (handle == nullptr) {
-                    const char *dlopen_error = dlerror(); // NOLINT(concurrency-mt-unsafe)
-                    spdlog::warn("Failed to pre-load libtorchtrt from '{}': {}",
-                                 ALPHAZERO_TRT_LIB_PATH,
-                                 dlopen_error != nullptr ? dlopen_error : "unknown error");
-                    return false;
-                }
-                return true;
-            }();
-            (void)trt_runtime_loaded;
-#endif
-            return std::make_shared<Network>(torch::jit::load(network_file_path, device));
-        } catch (const c10::Error &e) {
-            spdlog::error(
-                "Failed to load network from {}. Ensure it is exported using TorchScript.",
-                network_file_path);
-            throw std::runtime_error("Network file is not in TorchScript format");
-        } catch (const std::exception &e) {
-            spdlog::error("Failed to load network: {}", e.what());
-            throw std::runtime_error("Failed to load network");
-        }
-    } else {
+// TorchScript checkpoints (plain scripted, or torch_tensorrt-compiled - both
+// produced by network.py's tensorrt_and_save_network(backend="torch_tensorrt"))
+// are ZIP archives, so they start with ZIP's local-file-header magic. A raw
+// TensorRT engine (network.py's backend="onnx" path - see
+// _onnx_to_trt_engine's builder.build_serialized_network output) is a private
+// binary format, never a ZIP. Checking for the ZIP magic first is what lets
+// get_network_func below dispatch to the right backend, and (when this binary
+// wasn't built with TensorRT SDK headers - see ALPHAZERO_NATIVE_TRT_ENGINE)
+// turns a raw-engine file into a specific, actionable error instead of
+// torch::jit::load's generic "not TorchScript" message, which read
+// identically whether the file was a raw TRT engine or genuinely corrupt.
+static bool looks_like_torchscript_zip(const std::string &path) {
+    std::ifstream f(path, std::ios::binary);
+    char magic[4] = {};
+    f.read(magic, sizeof(magic));
+    return f.gcount() == sizeof(magic) && magic[0] == 'P' && magic[1] == 'K' &&
+           magic[2] == '\x03' && magic[3] == '\x04';
+}
+
+static std::shared_ptr<InferenceBackend> get_network_func(std::string network_file_path,
+                                                           torch::Device device) {
+    if (!std::filesystem::exists(network_file_path)) {
         spdlog::error("File {} doesn't exist", network_file_path);
         throw std::runtime_error("Network file not found");
+    }
+
+    if (!looks_like_torchscript_zip(network_file_path)) {
+#ifdef ALPHAZERO_NATIVE_TRT_ENGINE
+        return std::make_shared<TensorRTInferenceBackend>(network_file_path, device);
+#else
+        spdlog::error(
+            "Network file '{}' is not a TorchScript archive (no ZIP magic) - it looks "
+            "like a raw TensorRT engine (e.g. network.py's backend=\"onnx\" path), which "
+            "this binary cannot load: it has no TensorRT SDK headers (NvInfer.h) linked "
+            "in. Use a scripted (.pt_scripted) or torch_tensorrt-compiled (.pt_trt via "
+            "backend=\"torch_tensorrt\") checkpoint instead.",
+            network_file_path);
+        throw std::runtime_error(
+            "Network file is a raw TensorRT engine, not a loadable TorchScript archive");
+#endif
+    }
+
+    try {
+#ifdef ALPHAZERO_TRT_LIB_PATH
+        static const bool trt_runtime_loaded = []() {
+            void *handle = dlopen(ALPHAZERO_TRT_LIB_PATH, RTLD_NOW | RTLD_GLOBAL);
+            if (handle == nullptr) {
+                const char *dlopen_error = dlerror(); // NOLINT(concurrency-mt-unsafe)
+                spdlog::warn("Failed to pre-load libtorchtrt from '{}': {}",
+                             ALPHAZERO_TRT_LIB_PATH,
+                             dlopen_error != nullptr ? dlopen_error : "unknown error");
+                return false;
+            }
+            return true;
+        }();
+        (void)trt_runtime_loaded;
+#endif
+        auto network = std::make_shared<Network>(torch::jit::load(network_file_path, device));
+        network->to(device);
+        network->eval();
+        return std::make_shared<TorchScriptInferenceBackend>(std::move(network));
+    } catch (const c10::Error &e) {
+        spdlog::error("Failed to load network from {}. Ensure it is exported using TorchScript.",
+                      network_file_path);
+        throw std::runtime_error("Network file is not in TorchScript format");
+    } catch (const std::exception &e) {
+        spdlog::error("Failed to load network: {}", e.what());
+        throw std::runtime_error("Failed to load network");
     }
 }
 
@@ -839,8 +1042,6 @@ NetworkInfererFactory::NetworkInfererFactory(std::string network_file_path, torc
     : network_file_path(std::move(network_file_path)), device(device),
       wait_for_count(wait_for_count), timeout_ms(timeout_ms), encoder(std::move(encoder)),
       network(get_network_func(this->network_file_path, device)) {
-    network->to(device);
-    network->eval();
 #ifdef ALPHAZERO_TRT_LIB_PATH
     enable_cudagraphs_if_requested(device);
 #endif

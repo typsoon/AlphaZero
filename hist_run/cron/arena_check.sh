@@ -12,10 +12,31 @@ JSONL="$REPO/hist_run/cron/arena_log.jsonl"
 #
 # Fixed strength spread: an early net, the mid-run anchor 0716 (see project
 # memory 'arena-sample-size-noise'), and the parity target 1432 -- all 19-plane.
+# .pt_scripted, not .pt_trt: these three were compiled with torch_tensorrt,
+# which has no cp314 wheel, so its custom TorchScript class
+# (torch.classes.tensorrt.Engine) never gets registered by a 3.14-built
+# run_arena and loading them throws "Unknown type name". The .pt_scripted
+# siblings (plain TorchScript, no TRT) already exist alongside them and load
+# fine - same fix already used for seed_0400/mateusz/rollback_2316 below.
 OPPONENTS=(
-    "early_0714_0936:$OLD_DIR/chess_AZNetwork_20260714_0936.pt_trt:0"
-    "mid_0716:$OLD_DIR/chess_AZNetwork_20260716_0716.pt_trt:0"
-    "champ_1432:$OLD_DIR/chess_AZNetwork_20260718_1432.pt_trt:0"
+    "early_0714_0936:$OLD_DIR/chess_AZNetwork_20260714_0936.pt_scripted:0"
+    "mid_0716:$OLD_DIR/chess_AZNetwork_20260716_0716.pt_scripted:0"
+    "champ_1432:$OLD_DIR/chess_AZNetwork_20260718_1432.pt_scripted:0"
+    # The 04:00 net the current run was restarted from (2026-07-27) - a fixed
+    # progress anchor: >50% means training has improved over its own start
+    # point. Same architecture/encoder as side A (enc 4), .pt_scripted so no
+    # double-TRT-context crash.
+    "seed_0400:$OLD_DIR/chess_AZNetwork_hist_20260725_040000.pt_scripted:4"
+    # A friend's mature v1 net (Engine-Zoo ckpt_1300, converted 2026-07-28) - a
+    # fixed external reference. 19-plane v1, so encoder 0; .pt_scripted so no
+    # double-TRT-context crash against side A. Baseline: mateusz went 15% vs
+    # champ_1432 and ~even (55%) vs the current net at conversion time.
+    "mateusz:$REPO/mateusz_champion/mateusz_champion.pt_scripted:0"
+    # The pre-collapse peak the run was rolled back to (2026-07-29): a fixed
+    # "did it climb past where we restarted?" anchor. >50% means the current net
+    # has surpassed the rollback point. Same arch/encoder as side A (enc 4),
+    # .pt_scripted so no double-TRT-context crash.
+    "rollback_2316:$OLD_DIR/chess_AZNetwork_hist_20260728_231632.pt_scripted:4"
 )
 
 # Self-progression opponents: our own archived history-net snapshots from the
@@ -37,8 +58,8 @@ THREADS=6
 SIMS=200
 
 exec 9>"$LOCK"
-if ! flock -n 9; then
-    echo "RESULT: SKIP arena: another GPU task holds the lock"
+if ! flock -w 900 9; then
+    echo "RESULT: SKIP arena: another GPU task holds the lock (timed out)"
     exit 0
 fi
 free=$(gpu_free_mb)
@@ -70,6 +91,7 @@ done
 cp "$HIST_SCRIPTED" "$SIDE_A"
 
 summary=""
+tb_pairs=()
 for entry in "${OPPONENTS[@]}"; do
     label="${entry%%:*}"
     rest="${entry#*:}"
@@ -90,5 +112,11 @@ for entry in "${OPPONENTS[@]}"; do
     echo "[$(date '+%F %T')] vs ${label}: A=${score}% (Elo ${elo:-?})" >>"$LOG"
     echo "{\"time\":\"$(date '+%F %T')\",\"opponent\":\"$label\",\"score_a_pct\":\"$score\",\"elo\":\"${elo:-}\"}" >>"$JSONL"
     summary="$summary ${label}=${score}%"
+    # Collect for TensorBoard as a win fraction (0-1); skip failed matchups.
+    if [[ "$score" =~ ^[0-9.]+$ ]]; then
+        tb_pairs+=("eval/arena/${label}" "$(awk "BEGIN{print $score/100}")")
+    fi
 done
 echo "RESULT: arena vs ${#OPPONENTS[@]} nets ->$summary"
+# Push this round's scores to TensorBoard (runs/chess_hist_eval); best-effort.
+[ ${#tb_pairs[@]} -gt 0 ] && python "$REPO/hist_run/cron/tb_log.py" "${tb_pairs[@]}" 2>/dev/null || true

@@ -13,6 +13,7 @@
 #include <torch/torch.h>
 
 class DynamicBatcher;
+class InferenceBackend;
 
 class NetworkInferer : public Inferer {
   private:
@@ -36,14 +37,18 @@ class NetworkInferer : public Inferer {
 
 class NetworkInfererFactory : public InfererFactory {
   private:
-    using Network = torch::jit::script::Module;
-
     std::string network_file_path;
     torch::Device device;
     int wait_for_count;
     int timeout_ms;
 
-    std::shared_ptr<Network> network;
+    // Either a TorchScript module (plain scripted or torch_tensorrt-compiled -
+    // both are ZIP archives loadable via torch::jit::load) or, when this
+    // binary was built with TensorRT SDK headers (see engine/inference/
+    // CMakeLists.txt's ALPHAZERO_TENSORRT_INCLUDE_DIR), a raw TensorRT engine
+    // (network.py's backend="onnx" output). See get_network_func in
+    // basic_infer.cpp for the format-detection dispatch.
+    std::shared_ptr<InferenceBackend> network;
     std::shared_ptr<DynamicBatcher> batcher;
     // Owned here so its lifetime exactly matches this factory's network - a
     // cached (policy, value) is only valid for the weights that produced it,

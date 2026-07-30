@@ -30,8 +30,11 @@ class AlphaZeroTrainer:
         device: torch.device = torch.device("cpu"),
         minibatch_size=4096,
         scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
+        value_loss_weight: float = 1.0,
     ):
-        self.model = torch.compile(model.to(memory_format=torch.channels_last), mode="reduce-overhead")
+        self.model = torch.compile(
+            model.to(memory_format=torch.channels_last), mode="default"
+        )
         self.replay_buffer = replay_buffer
         self.optimizer = optimizer
         self.minibatch_size = minibatch_size
@@ -47,6 +50,13 @@ class AlphaZeroTrainer:
         # by default; chess-v2's is "wdl", 3 win/draw/loss logits trained with
         # cross-entropy against the game outcome). See ChessAzV2Network.
         self.value_is_wdl = getattr(model, "value_head", "scalar") == "wdl"
+        # Relative weight of the value loss in the combined objective:
+        #   loss = policy_loss + value_loss_weight * value_loss
+        # 1.0 reproduces the previous behavior. Lowering it (Leela Chess Zero
+        # used 0.25) regularizes a value head that would otherwise overfit and
+        # drag the shared trunk down into a strength regression - see
+        # github.com/leela-zero/leela-zero/issues/1480.
+        self.value_loss_weight = value_loss_weight
 
         self.scaler = torch.amp.GradScaler("cuda", enabled=(self.device.type == "cuda"))
         if self.device.type == "cuda":
@@ -141,7 +151,11 @@ class AlphaZeroTrainer:
                         )
                         return global_step
 
-                    states = states.to(self.device, memory_format=torch.channels_last, non_blocking=True)
+                    states = states.to(
+                        self.device,
+                        memory_format=torch.channels_last,
+                        non_blocking=True,
+                    )
                     target_policies = target_policies.to(self.device, non_blocking=True)
                     target_values = target_values.to(self.device, non_blocking=True)
 
@@ -174,7 +188,7 @@ class AlphaZeroTrainer:
                             else:
                                 value_loss = F.mse_loss(v_preds.squeeze(-1), v_batch)
 
-                            loss = policy_loss + value_loss
+                            loss = policy_loss + self.value_loss_weight * value_loss
                             loss /= accum_steps
 
                         self.scaler.scale(loss).backward()
@@ -393,6 +407,36 @@ def self_play_and_train_loop(
                 writer.add_scalar(
                     "self_play/replay_buffer_size", replay_buffer.get_size(), iteration
                 )
+
+            # Win/draw/loss mix of the training data, logged after every
+            # self-play round. Sampled from the buffer's value targets (per
+            # position, side-to-move perspective: +1 win / 0 draw / -1 loss), so
+            # it is a position-weighted, whole-buffer estimate - NOT an exact
+            # per-game tally over just this round's games (that would need the
+            # C++ self_play to report it). A climbing draw rate is the signal
+            # that self-play has gone drawish and the value target is collapsing
+            # toward 0.
+            # Wrapped so a diagnostic-logging hiccup can never take down training.
+            try:
+                buf_size = replay_buffer.get_size()
+                if buf_size > 0:
+                    wdl_n = min(2048, buf_size)
+                    with replay_buffer.get_sampler() as wdl_sampler:
+                        _, _, wdl_values = wdl_sampler.sample(wdl_n)
+                    wdl_values = wdl_values.reshape(-1).float()
+                    win_rate = (wdl_values > 0.5).float().mean().item()
+                    loss_rate = (wdl_values < -0.5).float().mean().item()
+                    draw_rate = max(0.0, 1.0 - win_rate - loss_rate)
+                    logging.info(
+                        f"Self-play W/D/L (buffer positions, n={wdl_n}): "
+                        f"win {win_rate:.1%} / draw {draw_rate:.1%} / loss {loss_rate:.1%}"
+                    )
+                    if writer is not None:
+                        writer.add_scalar("self_play/win_rate", win_rate, iteration)
+                        writer.add_scalar("self_play/draw_rate", draw_rate, iteration)
+                        writer.add_scalar("self_play/loss_rate", loss_rate, iteration)
+            except Exception as exc:  # noqa: BLE001 - never let logging crash training
+                logging.warning(f"W/D/L logging skipped this iteration: {exc}")
 
             global_step = trainer.train(
                 batch_size,

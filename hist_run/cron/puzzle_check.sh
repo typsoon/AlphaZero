@@ -8,8 +8,8 @@ LOG="$REPO/hist_run/cron/puzzle.log"
 JSONL="$REPO/hist_run/cron/puzzle_log.jsonl"
 
 exec 9>"$LOCK"
-if ! flock -n 9; then
-  echo "RESULT: SKIP puzzle: another GPU task holds the lock"
+if ! flock -w 900 9; then
+  echo "RESULT: SKIP puzzle: another GPU task holds the lock (timed out)"
   exit 0
 fi
 free=$(gpu_free_mb)
@@ -38,5 +38,9 @@ fi
 echo "[$(date '+%F %T')] $score" >>"$LOG"
 echo "{\"time\":\"$(date '+%F %T')\",\"result\":\"$score\"}" >>"$JSONL"
 echo "RESULT: puzzles -> $score"
+# Push the pass rate (as a 0-1 fraction) to TensorBoard; best-effort.
+pct=$(echo "$score" | grep -oE "[0-9.]+%" | head -1 | tr -d '%')
+[ -n "$pct" ] && python "$REPO/hist_run/cron/tb_log.py" \
+    eval/puzzle_pass_rate "$(awk "BEGIN{print $pct/100}")" 2>/dev/null || true
 # Value-head calibration from the just-written results.json (same eval run).
 python "$REPO/hist_run/cron/value_calib.py"

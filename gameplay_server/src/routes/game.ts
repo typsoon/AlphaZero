@@ -41,7 +41,7 @@ async function resolveAgentSocket(
   const baseDir = '/tmp';
   try {
     const files = await fs.readdir(baseDir);
-    const dirs = files.filter((f) => f.startsWith('alphazero-inference-'));
+    const dirs = files.filter((f) => f.startsWith('alphazero-inference'));
     for (const dir of dirs) {
       const networkDir = path.join(baseDir, dir, gameType, agentName);
       try {
@@ -102,7 +102,7 @@ export default async function gameRoutes(server: FastifyInstance) {
         const queryGame = request.query.game;
         const baseDir = '/tmp';
         const files = await fs.readdir(baseDir);
-        const dirs = files.filter((f) => f.startsWith('alphazero-inference-'));
+        const dirs = files.filter((f) => f.startsWith('alphazero-inference'));
 
         const agents = new Set<string>();
         for (const dir of dirs) {

@@ -48,6 +48,12 @@ class CheckpointManager:
             self.tensorrt_dir
             / f"{network_name_stem}_%d{self.tensorrt_checkpoint_suffix}"
         )
+        # Stable path (not per-checkpoint) so the onnx backend's timing cache
+        # (see network.py's _onnx_to_trt_engine) warms up and stays warm
+        # across every iteration of this run - the network architecture is
+        # constant between iterations (only weights change), so the same
+        # kernel-selection decisions apply every time.
+        self.tensorrt_timing_cache_path = str(self.tensorrt_dir / "timing_cache.bin")
 
         # Detect existing checkpoints to properly resume
         for i in range(self.max_checkpoints):
@@ -83,9 +89,29 @@ class CheckpointManager:
         )
         if torch.cuda.is_available() and compile_trt:
             try:
+                import torch_tensorrt  # noqa: F401
+
+                backend = "torch_tensorrt"
+            except ImportError:
+                # No cp314 wheel for torch_tensorrt. The onnx backend
+                # (network.py's backend="onnx") produces a raw TensorRT
+                # engine rather than a TorchScript module -
+                # get_latest_inference_model_file() below hands anything at
+                # the .pt_trt path straight to self-play's loader, and (as of
+                # engine/inference/basic_infer.cpp's TensorRTInferenceBackend
+                # - see [[native-tensorrt-engine-loading]]) that loader now
+                # natively understands this format too when the binary was
+                # built with TensorRT SDK headers. Falls back to the plain
+                # scripted network automatically if it wasn't.
+                backend = "onnx"
+            try:
                 # Free PyTorch cached memory so TensorRT has enough VRAM to compile
                 torch.cuda.empty_cache()
-                network.tensorrt_and_save_network(self.tensorrt_name_fmstr % 0)
+                network.tensorrt_and_save_network(
+                    self.tensorrt_name_fmstr % 0,
+                    backend=backend,
+                    timing_cache_path=self.tensorrt_timing_cache_path,
+                )
             except Exception as e:
                 print(f"Failed to compile TensorRT engine: {e}")
 

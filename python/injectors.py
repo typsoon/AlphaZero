@@ -115,6 +115,7 @@ def get_trainer(
     minibatch_size=4096,
     initial_lr: float = DEFAULT_INITIAL_LR,
     lr_lower_bound: float = DEFAULT_LR_LOWER_BOUND,
+    value_loss_weight: float = 1.0,
 ) -> AlphaZeroTrainer:
     optimizer = Adam(
         model.parameters(),
@@ -125,5 +126,11 @@ def get_trainer(
     scheduler = LambdaLR(optimizer, _make_lr_multiplier(initial_lr, lr_lower_bound))
 
     return AlphaZeroTrainer(
-        model, replay_buffer, optimizer, device, minibatch_size, scheduler=scheduler
+        model,
+        replay_buffer,
+        optimizer,
+        device,
+        minibatch_size,
+        scheduler=scheduler,
+        value_loss_weight=value_loss_weight,
     )
