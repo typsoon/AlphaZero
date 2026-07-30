@@ -73,6 +73,9 @@ void print_inference_server_usage(const char *program_name) {
                  "i.e. always full)\n"
               << "  --fast-mcts-simulations <N> Simulation count for the \"fast\" branch "
                  "above, only used when --full-search-probability < 1.0\n"
+              << "  --dirichlet-epsilon <p> Weight of Dirichlet root noise in plain-PUCT "
+                 "search() (default: 0.25, matches MCTS's own default); 0.0 disables root "
+                 "noise entirely (ignored by --use-gumbel-search)\n"
               << "  -h, --help              Show this help message\n";
 }
 
@@ -172,6 +175,21 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
                 args.fast_mcts_simulations = std::stoi(fast_sims_str);
             } catch (const std::exception &) {
                 error = "Invalid value for --fast-mcts-simulations: " + fast_sims_str;
+                return false;
+            }
+            continue;
+        }
+        std::string dirichlet_eps_str;
+        if (read_option_value(i, argc, argv, arg, "--dirichlet-epsilon", dirichlet_eps_str,
+                              error)) {
+            try {
+                args.dirichlet_epsilon = std::stof(dirichlet_eps_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --dirichlet-epsilon: " + dirichlet_eps_str;
+                return false;
+            }
+            if (args.dirichlet_epsilon < 0.0f || args.dirichlet_epsilon > 1.0f) {
+                error = "--dirichlet-epsilon must be between 0.0 and 1.0";
                 return false;
             }
             continue;

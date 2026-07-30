@@ -392,6 +392,16 @@ def get_args():
         "original behavior",
     )
     parser.add_argument(
+        "--dirichlet-epsilon",
+        type=float,
+        default=0.25,
+        help="Weight of Dirichlet root noise mixed into plain-PUCT search()'s "
+        "root policy (see MCTS::search()). 0.25 is AlphaGo Zero's self-play "
+        "value and MCTS's own default. 0.0 disables root noise entirely. "
+        "Ignored when --use-gumbel-search is set (search_gumbel() never mixes "
+        "in Dirichlet noise)",
+    )
+    parser.add_argument(
         "--log-dir",
         type=str,
         default=None,
@@ -583,6 +593,7 @@ if __name__ == "__main__":
         resignation_min_ply=args.resignation_min_ply,
         resignation_disable_probability=args.resignation_disable_probability,
         fpu_reduction=args.fpu_reduction,
+        dirichlet_epsilon=args.dirichlet_epsilon,
         self_play_network_path=args.self_play_network,
         self_play_value_network_path=args.self_play_value_network,
         encoder=encoder,

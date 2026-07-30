@@ -712,6 +712,7 @@ def task_run_inference_server():
         max_num_considered_actions,
         full_search_probability,
         fast_mcts_simulations,
+        dirichlet_epsilon,
         params_file,
     ):
         p = _merge_params_file(params_file, locals(), _INFERENCE_JSON_FIELD_MAP)
@@ -726,6 +727,7 @@ def task_run_inference_server():
         max_num_considered_actions = p["max_num_considered_actions"]
         full_search_probability = p["full_search_probability"]
         fast_mcts_simulations = p["fast_mcts_simulations"]
+        dirichlet_epsilon = p["dirichlet_epsilon"]
 
         network_path = resolve_network_path(network_path, game)
         cmd = (
@@ -750,6 +752,8 @@ def task_run_inference_server():
             cmd += f" --full-search-probability {full_search_probability}"
         if fast_mcts_simulations:
             cmd += f" --fast-mcts-simulations {fast_mcts_simulations}"
+        if dirichlet_epsilon != 0.25:
+            cmd += f" --dirichlet-epsilon {dirichlet_epsilon}"
         return run_protected(cmd)
 
     return {
@@ -834,6 +838,16 @@ def task_run_inference_server():
                 "used when --full-search-probability < 1.0",
             },
             {
+                "name": "dirichlet_epsilon",
+                "long": "dirichlet-epsilon",
+                "type": float,
+                "default": 0.25,
+                "help": "Weight of Dirichlet root noise in plain-PUCT search() "
+                "(default 0.25, matches MCTS's own default); 0.0 disables root "
+                "noise entirely - the setting an arena or a real best-move "
+                "server wants. Ignored by --use-gumbel-search.",
+            },
+            {
                 "name": "params_file",
                 "long": "params_file",
                 "type": str,
@@ -841,9 +855,9 @@ def task_run_inference_server():
                 "help": "JSON file with any of: mcts_simulations (-> "
                 "mcts_search_depth), mcts_batch_size, chess_encoder_history, "
                 "use_gumbel_search, max_num_considered_actions, "
-                "full_search_probability, fast_mcts_simulations. A full "
-                "training_params/*.json works directly (other keys ignored); "
-                "CLI flags win over file values.",
+                "full_search_probability, fast_mcts_simulations, "
+                "dirichlet_epsilon. A full training_params/*.json works "
+                "directly (other keys ignored); CLI flags win over file values.",
             },
         ],
         "task_dep": ["build"],

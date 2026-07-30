@@ -66,8 +66,10 @@ class Connect4ModelWrapper final : public ModelWrapper {
   public:
     Connect4ModelWrapper(std::string network_path, std::string device, int search_depth,
                          int batch_size, bool use_gumbel_search, int max_num_considered_actions,
-                         float full_search_probability, int fast_mcts_simulations)
-        : device(torch::Device(std::move(device))), mcts(std::move(network_path), this->device),
+                         float full_search_probability, int fast_mcts_simulations,
+                         float dirichlet_epsilon)
+        : device(torch::Device(std::move(device))),
+          mcts(std::move(network_path), this->device, 1.25f, 19652.0f, dirichlet_epsilon),
           search_depth(search_depth), batch_size(batch_size), use_gumbel_search(use_gumbel_search),
           max_num_considered_actions(max_num_considered_actions),
           full_search_probability(full_search_probability),
@@ -124,9 +126,9 @@ class ChessModelWrapper final : public ModelWrapper {
     ChessModelWrapper(std::string network_path, std::string device, int search_depth,
                       int batch_size, int chess_encoder_history, bool use_gumbel_search,
                       int max_num_considered_actions, float full_search_probability,
-                      int fast_mcts_simulations)
+                      int fast_mcts_simulations, float dirichlet_epsilon)
         : device(torch::Device(std::move(device))),
-          mcts(std::move(network_path), this->device, 1.25f, 19652.0f, 0.25f, 0.3f,
+          mcts(std::move(network_path), this->device, 1.25f, 19652.0f, dirichlet_epsilon, 0.3f,
                default_arena_size_in_bytes, 0.0f,
                [chess_encoder_history]() -> std::shared_ptr<StateEncoder> {
                    if (chess_encoder_history > 0) {
@@ -186,18 +188,20 @@ class ChessModelWrapper final : public ModelWrapper {
 std::shared_ptr<ModelWrapper> create_connect4_model_wrapper(
     const std::string &network_path, const std::string &device, int mcts_search_depth,
     int mcts_batch_size, bool use_gumbel_search, int max_num_considered_actions,
-    float full_search_probability, int fast_mcts_simulations) {
+    float full_search_probability, int fast_mcts_simulations, float dirichlet_epsilon) {
     return std::make_shared<Connect4ModelWrapper>(
         network_path, device, mcts_search_depth, mcts_batch_size, use_gumbel_search,
-        max_num_considered_actions, full_search_probability, fast_mcts_simulations);
+        max_num_considered_actions, full_search_probability, fast_mcts_simulations,
+        dirichlet_epsilon);
 }
 
 std::shared_ptr<ModelWrapper> create_chess_model_wrapper(
     const std::string &network_path, const std::string &device, int mcts_search_depth,
     int mcts_batch_size, int chess_encoder_history, bool use_gumbel_search,
-    int max_num_considered_actions, float full_search_probability, int fast_mcts_simulations) {
-    return std::make_shared<ChessModelWrapper>(network_path, device, mcts_search_depth,
-                                               mcts_batch_size, chess_encoder_history,
-                                               use_gumbel_search, max_num_considered_actions,
-                                               full_search_probability, fast_mcts_simulations);
+    int max_num_considered_actions, float full_search_probability, int fast_mcts_simulations,
+    float dirichlet_epsilon) {
+    return std::make_shared<ChessModelWrapper>(
+        network_path, device, mcts_search_depth, mcts_batch_size, chess_encoder_history,
+        use_gumbel_search, max_num_considered_actions, full_search_probability,
+        fast_mcts_simulations, dirichlet_epsilon);
 }

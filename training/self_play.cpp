@@ -201,7 +201,7 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
                int resignation_min_ply, float resignation_disable_probability, float fpu_reduction,
                std::shared_ptr<StateEncoder> encoder,
                std::shared_ptr<StateEncoder> self_play_encoder, std::string value_network_path,
-               std::shared_ptr<StateEncoder> value_network_encoder) {
+               std::shared_ptr<StateEncoder> value_network_encoder, float dirichlet_epsilon) {
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
@@ -283,9 +283,11 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
     // Calculate necessary arena size for the MCTS memory pool
     size_t arena_size_bytes = calculate_arena_size(initial_game->getActionSize(), mcts_num_simulations);
 
-    // Pass the PUCT/arena defaults through explicitly so fpu_reduction (the last
-    // argument) reaches the factory; 0.0 reproduces the original assume-draw FPU.
-    MCTSFactory mcts_factory(dual_factory, 1.25f, 19652.0f, 0.25f, 0.3f,
+    // Pass the PUCT/arena defaults through explicitly so fpu_reduction and
+    // dirichlet_epsilon reach the factory; 0.0 fpu_reduction reproduces the
+    // original assume-draw FPU, 0.25 dirichlet_epsilon reproduces the original
+    // hardcoded root-noise weight.
+    MCTSFactory mcts_factory(dual_factory, 1.25f, 19652.0f, dirichlet_epsilon, 0.3f,
                              arena_size_bytes, fpu_reduction);
 
     std::atomic<int> games_finished{0};

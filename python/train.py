@@ -282,6 +282,7 @@ def self_play_and_train_loop(
     resignation_min_ply: int = 60,
     resignation_disable_probability: float = 0.1,
     fpu_reduction: float = 0.0,
+    dirichlet_epsilon: float = 0.25,
     self_play_network_path: Optional[str] = None,
     self_play_value_network_path: Optional[str] = None,
     # The input encoding self-play feeds into inference and records into
@@ -397,6 +398,7 @@ def self_play_and_train_loop(
                 resignation_min_ply=resignation_min_ply,
                 resignation_disable_probability=resignation_disable_probability,
                 fpu_reduction=fpu_reduction,
+                dirichlet_epsilon=dirichlet_epsilon,
                 encoder=encoder,
                 self_play_encoder=self_play_encoder,
                 value_network_path=self_play_value_network_path or "",

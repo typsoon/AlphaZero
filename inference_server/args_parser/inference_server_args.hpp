@@ -35,6 +35,14 @@ struct InferenceServerArgs {
     // mcts_search_depth so a stray fast_mcts_simulations=0 can't silently
     // zero out the search.
     int fast_mcts_simulations{0};
+    // Weight of Dirichlet root noise mixed into plain-PUCT search()'s root
+    // policy: policy = (1-eps)*policy + eps*noise. Matches MCTS's own default
+    // (0.25, AlphaGo Zero's self-play value). search_gumbel() never uses this
+    // (Gumbel-Top-k IS its root exploration mechanism). 0.0 disables root
+    // noise entirely - the setting an arena or a "give me this net's actual
+    // best move" server wants, since noise is a self-play exploration device,
+    // not something serving/evaluation should have on by default.
+    float dirichlet_epsilon{0.25f};
 };
 
 void print_inference_server_usage(const char *program_name);

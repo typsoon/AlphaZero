@@ -54,6 +54,11 @@
 // engine/utils/resignation.hpp). Defaults follow AlphaGo Zero's setup;
 // resignation_enabled defaults to false so existing callers keep their
 // play-to-the-end behavior.
+// dirichlet_epsilon: weight of Dirichlet root noise mixed into plain-PUCT
+// search()'s root policy (see mcts.hpp); 0.25 matches AlphaGo Zero's
+// self-play value and MCTS's own default, so existing callers are
+// unaffected. Ignored when use_gumbel_search is set (search_gumbel() never
+// mixes in Dirichlet noise - Gumbel-Top-k IS its root exploration).
 void self_play(std::shared_ptr<Game> game, std::string network_path, ReplayBuffer &replay_buf,
                int num_games = 100, int thread_count = std::thread::hardware_concurrency(),
                int mcts_num_simulations = 800, int mcts_batch_size = 32, int max_moves = 512,
@@ -65,7 +70,8 @@ void self_play(std::shared_ptr<Game> game, std::string network_path, ReplayBuffe
                float fpu_reduction = 0.0f, std::shared_ptr<StateEncoder> encoder = nullptr,
                std::shared_ptr<StateEncoder> self_play_encoder = nullptr,
                std::string value_network_path = "",
-               std::shared_ptr<StateEncoder> value_network_encoder = nullptr);
+               std::shared_ptr<StateEncoder> value_network_encoder = nullptr,
+               float dirichlet_epsilon = 0.25f);
 
 // Assuming Game, MCTS, ReplayBuffer, InfererFactory, MCTSFactory are defined
 // somewhere And you have torch or your own tensor type if needed
