@@ -4,6 +4,7 @@
   "mcts_simulations": 800,
   "full_search_probability": 1,
   "resignation_enabled": false,
+  "dirichlet_epsilon": 0.0,
   "network_arch": "chess_v2",
   "chess_encoder_history": 4
 }
