@@ -46,6 +46,18 @@ const lastAction = ref<{
   to: { row: number; col: number };
 } | null>(null);
 
+type ChessHistoryEntry = { board: string[][]; fen: string; last_action?: number };
+const history = ref<ChessHistoryEntry[]>([]);
+const historyIndex = ref<number>(0);
+const rewindMode = ref<boolean>(false);
+// The board actually shown on the chessboard.js instance: the live board
+// normally, or a frozen snapshot from `history` while reviewing past moves.
+const displayedBoard = computed(() =>
+  rewindMode.value && history.value.length > 0
+    ? history.value[historyIndex.value]!.board
+    : board.value,
+);
+
 const userSessions = ref<Record<string, string>>({});
 
 // Preload empty image to fix drag ghost issues in some browsers (e.g. Safari/Firefox showing file icons)
@@ -90,7 +102,42 @@ const p1Agent = ref<string>('');
 const p2Type = ref<'human' | 'ai'>('ai');
 const p2Agent = ref<string>('');
 const availableAgents = ref<string[]>([]);
-const currentMode = ref<'setup' | 'game' | 'editor'>('setup');
+const currentMode = ref<'setup' | 'game' | 'editor' | 'browser'>('setup');
+
+type GameInfo = {
+  id: string;
+  p1Type: string;
+  p2Type: string;
+  gameType: string;
+  finished: boolean;
+};
+const activeGames = ref<GameInfo[]>([]);
+
+async function fetchGames() {
+  try {
+    const res = await fetch(`${apiBase}/games`);
+    const data = await res.json();
+    if (data.status === 'ok') {
+      activeGames.value = data.games.filter(
+        (g: GameInfo) => g.gameType === 'chess',
+      );
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function joinGame(id: string) {
+  gameId.value = id;
+  loadSessions();
+  playerId.value = userSessions.value[id] || 'spectator';
+  rewindMode.value = false;
+  history.value = [];
+  statusMsg.value = '';
+  currentMode.value = 'game';
+  connectWebSocket();
+  fetchStatus();
+}
 
 // --- Chess Puzzle Editor ---
 const PIECE_CHARS = [
@@ -547,13 +594,20 @@ let cbBoard: ChessBoardInstance | null = null;
 // castling's rook move, en passant capture, or the promoted piece type.
 let pendingOptimisticBoard: string[][] | null = null;
 
-// Touch (mobile) tap-to-move state. chessboard.js handles drags on touch, but a
-// plain tap does not reliably produce a `click` (its touch-drag intercepts it),
-// so taps are detected explicitly via touchstart/touchend below.
-let touchStartInfo: { x: number; y: number } | null = null;
-// After handling a tap we briefly ignore the synthetic mouse `click` the browser
-// still fires, so the same tap isn't processed twice.
-let suppressClickUntil = 0;
+// Tap/click-to-move state. chessboard.js's own mousedown handler picks up any
+// piece with legal moves and starts its internal drag machinery (hiding the
+// original piece, floating a dragged copy under the cursor) *unconditionally*
+// on mousedown, before it knows whether this will turn into a real drag or
+// just a click - so a plain click on a piece lands its native `click` event on
+// that floating copy (or wherever it ends up once chessboard.js's own
+// same-square "snapback" starts), not on the `.square-*` div our old delegated
+// `click` listener matched against. That made clicking a piece to select it
+// unreliable (chessboard.js's own transient drag-highlight would flash and
+// then get cleared by its snapback, looking like an immediate deselect).
+// Doing our own mousedown/mouseup distance check and square hit-testing (via
+// rowColFromPoint) sidesteps chessboard.js's DOM entirely. Touch devices need
+// the same treatment for the same reason (its touch-drag also swallows taps).
+let pointerStartInfo: { x: number; y: number } | null = null;
 
 /** Our internal board is a string[][] grid with row 0 = rank 8, col 0 = file a. */
 function squareToRowCol(square: string): { row: number; col: number } {
@@ -670,20 +724,36 @@ function rowColFromPoint(
 
 function onBoardTouchStart(e: TouchEvent) {
   const t = e.touches[0];
-  if (t) touchStartInfo = { x: t.clientX, y: t.clientY };
+  if (t) pointerStartInfo = { x: t.clientX, y: t.clientY };
 }
 
 function onBoardTouchEnd(e: TouchEvent) {
-  const start = touchStartInfo;
-  touchStartInfo = null;
+  const start = pointerStartInfo;
+  pointerStartInfo = null;
   const t = e.changedTouches[0];
   if (!start || !t) return;
   const moved = Math.hypot(t.clientX - start.x, t.clientY - start.y);
   if (moved > 15) return; // a drag → let chessboard.js's onDrop handle it
   const rc = rowColFromPoint(t.clientX, t.clientY);
   if (!rc) return;
-  e.preventDefault(); // suppress the synthetic mouse click that follows a tap
-  suppressClickUntil = Date.now() + 700;
+  // Suppresses the synthetic mousedown/mouseup/click that would otherwise
+  // follow a tap, so onBoardMouseUp below doesn't double-handle it.
+  e.preventDefault();
+  handleSquareClick(rc.row, rc.col);
+}
+
+function onBoardMouseDown(e: MouseEvent) {
+  pointerStartInfo = { x: e.clientX, y: e.clientY };
+}
+
+function onBoardMouseUp(e: MouseEvent) {
+  const start = pointerStartInfo;
+  pointerStartInfo = null;
+  if (!start) return;
+  const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+  if (moved > 15) return; // a drag → let chessboard.js's onDrop handle it
+  const rc = rowColFromPoint(e.clientX, e.clientY);
+  if (!rc) return;
   handleSquareClick(rc.row, rc.col);
 }
 
@@ -698,12 +768,12 @@ function initChessBoard() {
       BoardConfig['pieceTheme']
     >,
     onDragStart: ((source: string, _piece: string) => {
-      if (isTerminal.value) return false;
+      if (isTerminal.value || rewindMode.value) return false;
       const { row, col } = squareToRowCol(source);
       return squareHasLegalMoves(row, col);
     }) as unknown as NonNullable<BoardConfig['onDragStart']>,
     onDrop: ((source: string, target: string) => {
-      if (isTerminal.value) return 'snapback';
+      if (isTerminal.value || rewindMode.value) return 'snapback';
       const from = squareToRowCol(source);
       const to = squareToRowCol(target);
       const actions = getLegalMoves(from.row, from.col, to.row, to.col);
@@ -736,16 +806,23 @@ function initChessBoard() {
   cbBoard = ChessboardFactory(boardContainer.value, config);
 
   // Layer click/tap-to-move on top of chessboard.js (it has no built-in click
-  // API). Desktop uses the delegated `click`; touch devices need explicit
-  // tap handling because chessboard.js's touch-drag swallows the click.
+  // API). Both desktop and touch are handled via our own mousedown/mouseup
+  // (resp. touchstart/touchend) + hit-testing rather than a delegated native
+  // `click` listener - see the pointerStartInfo comment above for why a plain
+  // click on a piece can't be trusted to land on the right DOM target.
+  //
+  // mouseup is bound on `window`, not the board container: chessboard.js
+  // appends its floating "dragged piece" ghost directly to `<body>` (see its
+  // `$('body').append(buildPieceHTML(...))`), and hides the real piece, the
+  // instant a draggable piece receives mousedown. For a zero-movement click
+  // that ghost ends up exactly under the cursor, so the browser's mouseup
+  // hit-test lands on it - an element outside our container's subtree -
+  // and a container-scoped listener would never see the event at all.
+  // chessboard.js's own mouseup handling has this same problem and solves it
+  // the same way (its internal `mouseupWindow` is bound on `window` too).
   const containerEl = boardContainer.value;
-  $(containerEl).on('click', '.square-55d63', (event) => {
-    if (Date.now() < suppressClickUntil) return; // a touch tap already handled it
-    const square = $(event.currentTarget).attr('data-square');
-    if (!square) return;
-    const { row, col } = squareToRowCol(square);
-    handleSquareClick(row, col);
-  });
+  containerEl.addEventListener('mousedown', onBoardMouseDown);
+  window.addEventListener('mouseup', onBoardMouseUp);
   containerEl.addEventListener('touchstart', onBoardTouchStart, {
     passive: true,
   });
@@ -760,8 +837,9 @@ function onWindowResize() {
 
 function destroyChessBoard() {
   window.removeEventListener('resize', onWindowResize);
+  window.removeEventListener('mouseup', onBoardMouseUp);
   if (boardContainer.value) {
-    $(boardContainer.value).off('click');
+    boardContainer.value.removeEventListener('mousedown', onBoardMouseDown);
     boardContainer.value.removeEventListener('touchstart', onBoardTouchStart);
     boardContainer.value.removeEventListener('touchend', onBoardTouchEnd);
   }
@@ -778,7 +856,7 @@ watch(currentMode, async (mode) => {
   }
 });
 
-watch(board, (b) => {
+watch(displayedBoard, (b) => {
   cbBoard?.position(boardToPosition(b), true);
 });
 
@@ -797,11 +875,20 @@ watch(lastAction, (action) => {
   $container.find(`.square-${toSquare}`).addClass('last-move-highlight');
 });
 
+function handleKeydown(e: KeyboardEvent) {
+  if (currentMode.value !== 'game' || !rewindMode.value) return;
+  if (e.key === 'ArrowLeft') stepBackward();
+  else if (e.key === 'ArrowRight') stepForward();
+}
+
 onMounted(() => {
+  loadSessions();
   fetchAgents();
+  window.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown);
   if (ws) {
     ws.close();
   }
@@ -851,6 +938,9 @@ async function createNewGame() {
         playerId.value = 'spectator';
       }
 
+      rewindMode.value = false;
+      history.value = [];
+      statusMsg.value = '';
       currentMode.value = 'game';
       connectWebSocket();
       fetchStatus();
@@ -874,6 +964,10 @@ function connectWebSocket() {
       isTerminal.value = msg.data.is_terminal;
       legalActions.value = msg.data.legal_actions ?? [];
       currentPlayer.value = msg.data.current_player;
+      if (msg.data.history) {
+        history.value = msg.data.history;
+        if (!rewindMode.value) historyIndex.value = history.value.length - 1;
+      }
       if (msg.data.player_action !== undefined) {
         const action = msg.data.player_action;
         const act = Math.floor(action / 5);
@@ -913,6 +1007,10 @@ async function fetchStatus() {
       isTerminal.value = data.is_terminal;
       legalActions.value = data.legal_actions ?? [];
       currentPlayer.value = data.current_player;
+      if (data.history) {
+        history.value = data.history;
+        if (!rewindMode.value) historyIndex.value = history.value.length - 1;
+      }
       if (data.player_action !== undefined) {
         const action = data.player_action;
         const act = Math.floor(action / 5);
@@ -941,6 +1039,41 @@ async function fetchStatus() {
     }
   } catch (e) {
     console.error(e);
+  }
+}
+
+function startRewind() {
+  rewindMode.value = true;
+  historyIndex.value = history.value.length - 1;
+  selectedSquare.value = null;
+}
+
+function stepBackward() {
+  if (historyIndex.value > 0) historyIndex.value--;
+}
+
+function stepForward() {
+  if (historyIndex.value < history.value.length - 1) historyIndex.value++;
+}
+
+async function resumeGame(): Promise<void> {
+  if (!gameId.value) return;
+  try {
+    const res = await fetch(`${apiBase}/game/${gameId.value}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ history_index: historyIndex.value }),
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      rewindMode.value = false;
+      statusMsg.value = '';
+      fetchStatus();
+    } else {
+      alert(`Resume failed: ${data.message}`);
+    }
+  } catch (e: any) {
+    alert(`Resume error: ${e.message}`);
   }
 }
 
@@ -978,7 +1111,7 @@ function selectPromotion(action: number) {
 }
 
 function handleSquareClick(row: number, col: number) {
-  if (isTerminal.value) return;
+  if (isTerminal.value || rewindMode.value) return;
 
   if (!selectedSquare.value) {
     if (squareHasLegalMoves(row, col)) selectedSquare.value = { row, col };
@@ -1028,6 +1161,23 @@ async function makeMove(action: number) {
     fetchStatus();
   }
 }
+
+async function resign(): Promise<void> {
+  if (!gameId.value || !playerId.value || isTerminal.value) return;
+  try {
+    const res = await fetch(`${apiBase}/game/${gameId.value}/surrender`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player_id: playerId.value }),
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') {
+      alert(`Resign failed: ${data.message}`);
+    }
+  } catch (e: any) {
+    alert(`Resign error: ${e.message}`);
+  }
+}
 </script>
 
 <template>
@@ -1058,6 +1208,16 @@ async function makeMove(action: number) {
           @click="currentMode = 'game'"
         >
           Game
+        </button>
+        <button
+          class="btn"
+          :class="{ primary: currentMode === 'browser' }"
+          @click="
+            currentMode = 'browser';
+            fetchGames();
+          "
+        >
+          Browse Games
         </button>
         <button
           class="btn"
@@ -1105,8 +1265,121 @@ async function makeMove(action: number) {
       </div>
     </div>
 
+    <section class="card" v-else-if="currentMode === 'browser'">
+      <div
+        style="
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        "
+      >
+        <h2 style="margin: 0">Active Games</h2>
+        <button class="btn" @click="fetchGames">Refresh</button>
+      </div>
+      <div
+        v-if="activeGames.length === 0"
+        style="text-align: center; color: #666; padding: 20px"
+      >
+        No active games found.
+      </div>
+      <div v-else style="display: flex; flex-direction: column; gap: 8px">
+        <div
+          v-for="g in activeGames"
+          :key="g.id"
+          style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+          "
+        >
+          <div>
+            <strong>{{ g.id }}</strong
+            ><br />
+            <span style="font-size: 0.9em; color: #666">
+              {{ g.p1Type }} vs {{ g.p2Type }}
+              <span v-if="g.finished" style="color: #ef4444; margin-left: 8px"
+                >[Finished]</span
+              >
+            </span>
+          </div>
+          <button class="btn primary" @click="joinGame(g.id)">
+            {{
+              userSessions[g.id] && userSessions[g.id] !== ''
+                ? 'Connect'
+                : 'Spectate'
+            }}
+          </button>
+        </div>
+      </div>
+    </section>
+
     <section v-else-if="currentMode === 'game'" class="card chess-card">
       <div class="status-msg" v-if="statusMsg">{{ statusMsg }}</div>
+      <div
+        v-if="
+          (playerId && playerId !== 'spectator' && !isTerminal) ||
+          (isTerminal && !rewindMode && history.length > 0)
+        "
+        style="
+          display: flex;
+          justify-content: center;
+          gap: 12px;
+          margin-bottom: 8px;
+        "
+      >
+        <button
+          v-if="playerId && playerId !== 'spectator' && !isTerminal"
+          class="btn danger"
+          @click="resign"
+        >
+          Resign
+        </button>
+        <button
+          v-if="isTerminal && !rewindMode && history.length > 0"
+          class="btn primary"
+          @click="startRewind"
+        >
+          Review Game
+        </button>
+      </div>
+
+      <!-- Rewind Controls -->
+      <div
+        v-if="rewindMode"
+        style="
+          display: flex;
+          gap: 12px;
+          justify-content: center;
+          margin-bottom: 12px;
+          align-items: center;
+        "
+      >
+        <button
+          class="btn"
+          @click="stepBackward"
+          :disabled="historyIndex === 0"
+        >
+          ◀
+        </button>
+        <span style="font-weight: 600"
+          >Turn {{ historyIndex + 1 }} / {{ history.length }}</span
+        >
+        <button
+          class="btn"
+          @click="stepForward"
+          :disabled="historyIndex === history.length - 1"
+        >
+          ▶
+        </button>
+        <button class="btn primary" @click="resumeGame">
+          Resume Game Here
+        </button>
+      </div>
+
       <div class="chess-board-wrap">
         <div ref="boardContainer" class="chess-board"></div>
       </div>
