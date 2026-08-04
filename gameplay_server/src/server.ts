@@ -5,7 +5,7 @@ import gameRoutes from './routes/game.js';
 const server = fastify({ logger: true });
 
 server.register(websocketPlugin);
-server.register(gameRoutes);
+server.register(gameRoutes, { prefix: '/:gameType' });
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8000;
 

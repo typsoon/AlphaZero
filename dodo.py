@@ -406,9 +406,15 @@ def task_test_cpp():
 
 
 def task_test_ts():
-    """Run TypeScript server tests."""
-    ts_dir = PROJ_ROOT / "gameplay_server"
-    return {"actions": [with_report(f"cd {ts_dir} && npm install && npm run test")]}
+    """Run TypeScript server and client tests."""
+    server_dir = PROJ_ROOT / "gameplay_server"
+    client_dir = PROJ_ROOT / "gameplay_client"
+    return {
+        "actions": [
+            with_report(f"cd {server_dir} && npm install && npm run test"),
+            with_report(f"cd {client_dir} && npm install && npm run test"),
+        ]
+    }
 
 
 def task_check_all():
@@ -713,6 +719,8 @@ def task_run_inference_server():
         full_search_probability,
         fast_mcts_simulations,
         dirichlet_epsilon,
+        chess_encoder_flip_white,
+        fpu_reduction,
         params_file,
     ):
         p = _merge_params_file(params_file, locals(), _INFERENCE_JSON_FIELD_MAP)
@@ -728,6 +736,8 @@ def task_run_inference_server():
         full_search_probability = p["full_search_probability"]
         fast_mcts_simulations = p["fast_mcts_simulations"]
         dirichlet_epsilon = p["dirichlet_epsilon"]
+        chess_encoder_flip_white = p["chess_encoder_flip_white"]
+        fpu_reduction = p["fpu_reduction"]
 
         network_path = resolve_network_path(network_path, game)
         cmd = (
@@ -754,6 +764,10 @@ def task_run_inference_server():
             cmd += f" --fast-mcts-simulations {fast_mcts_simulations}"
         if dirichlet_epsilon != 0.25:
             cmd += f" --dirichlet-epsilon {dirichlet_epsilon}"
+        if game == "chess" and chess_encoder_history and chess_encoder_flip_white:
+            cmd += " --chess-encoder-flip-white"
+        if fpu_reduction != 0.0:
+            cmd += f" --fpu-reduction {fpu_reduction}"
         return run_protected(cmd)
 
     return {
@@ -848,6 +862,29 @@ def task_run_inference_server():
                 "server wants. Ignored by --use-gumbel-search.",
             },
             {
+                "name": "chess_encoder_flip_white",
+                "long": "chess-encoder-flip-white",
+                "type": bool,
+                "default": False,
+                "help": "ChessEncoderV2History only: use the engine-zoo "
+                "reference's row-flip convention (White flipped) instead of "
+                "this engine's own (Black flipped). Only for checkpoints "
+                "transplanted from engine-zoo (e.g. via "
+                "convert_safetensors_v2.py) - never for a network this repo "
+                "trained itself.",
+            },
+            {
+                "name": "fpu_reduction",
+                "long": "fpu-reduction",
+                "type": float,
+                "default": 0.0,
+                "help": "First-play-urgency reduction: an unvisited MCTS child "
+                "is scored at its parent's running value minus this amount, "
+                "instead of the assume-draw 0.0 (the server's original "
+                "behavior). 0.33 matches some reference PUCT implementations "
+                "(e.g. engine-zoo).",
+            },
+            {
                 "name": "params_file",
                 "long": "params_file",
                 "type": str,
@@ -856,8 +893,9 @@ def task_run_inference_server():
                 "mcts_search_depth), mcts_batch_size, chess_encoder_history, "
                 "use_gumbel_search, max_num_considered_actions, "
                 "full_search_probability, fast_mcts_simulations, "
-                "dirichlet_epsilon. A full training_params/*.json works "
-                "directly (other keys ignored); CLI flags win over file values.",
+                "dirichlet_epsilon, fpu_reduction. A full training_params/*.json "
+                "works directly (other keys ignored); CLI flags win over file "
+                "values.",
             },
         ],
         "task_dep": ["build"],

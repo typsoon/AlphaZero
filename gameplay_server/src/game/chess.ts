@@ -3,6 +3,14 @@ import type Game from './game.js';
 
 export class ChessBoard implements Game {
   private chess: Chess;
+  // Ordered actions this instance has actually stepped through, from either
+  // the starting position (no fen given) or an arbitrary fen (puzzle/editor
+  // positions - no real game history, so this stays empty for those). Sent
+  // to the inference server alongside the current position so it can replay
+  // the same moves and correctly seed threefold-repetition/history-encoder
+  // state instead of always evaluating as if the game just started - see
+  // get_inference_state().
+  private actionHistory: number[] = [];
 
   constructor(fen?: string) {
     this.chess = new Chess();
@@ -13,6 +21,7 @@ export class ChessBoard implements Game {
 
   reset(): void {
     this.chess.reset();
+    this.actionHistory = [];
   }
 
   getActionSize(): number {
@@ -28,6 +37,7 @@ export class ChessBoard implements Game {
     const move = this.decodeAction(action);
     try {
       this.chess.move(move);
+      this.actionHistory.push(action);
     } catch (error) {
       console.error(
         'Invalid move attempted: ',
@@ -57,6 +67,7 @@ export class ChessBoard implements Game {
     player: number;
     en_passant: number;
     castling: number[];
+    history: number[];
   } {
     const board = this.chess.board().map((row) =>
       row.map((square) => {
@@ -104,6 +115,7 @@ export class ChessBoard implements Game {
       player: this.get_current_player(),
       en_passant,
       castling: [k_mc, r1_mc, r2_mc, K_mc, R1_mc, R2_mc],
+      history: this.actionHistory,
     };
   }
 
@@ -120,8 +132,64 @@ export class ChessBoard implements Game {
     return this.decodeAction(action);
   }
 
+  /**
+   * The inverse of decodeMove: encodes a UCI move string ("e2e4", "e7e8q")
+   * into an engine action index, for callers (e.g. a UCI engine wrapper)
+   * that receive moves as UCI text - from an opponent engine, a GUI's
+   * `position ... moves ...` command, etc. - rather than from this board's
+   * own get_legal_actions().
+   */
+  encodeMove(uci: string): number {
+    const fromSquare = this.squareToRowCol(uci.slice(0, 2));
+    const toSquare = this.squareToRowCol(uci.slice(2, 4));
+    const promotionChar = uci.length > 4 ? uci[4] : undefined;
+
+    const from = fromSquare.row * 8 + fromSquare.col;
+    const to = toSquare.row * 8 + toSquare.col;
+
+    let promotion = 0;
+    if (promotionChar === 'q') promotion = 1;
+    else if (promotionChar === 'r') promotion = 2;
+    else if (promotionChar === 'n') promotion = 3;
+    else if (promotionChar === 'b') promotion = 4;
+
+    return (from * 64 + to) * 5 + promotion;
+  }
+
   is_terminal(): boolean {
     return this.chess.isGameOver();
+  }
+
+  /**
+   * Winner/reason for a finished game, derived from this instance's own
+   * chess.js state (which has seen the full move history) rather than a
+   * fresh Chess() reloaded from just the current FEN - reloading from FEN
+   * alone loses the position-repetition count, so isThreefoldRepetition()
+   * (and therefore isDraw()/isGameOver()) would never be able to fire on it.
+   */
+  get_game_over_reason(): { winner: number; reason: string } | null {
+    if (this.chess.isCheckmate()) {
+      // The side to move is the one in checkmate, i.e. the loser.
+      return {
+        winner: this.chess.turn() === 'w' ? -1 : 1,
+        reason: 'checkmate',
+      };
+    }
+    if (
+      this.chess.isStalemate() ||
+      this.chess.isInsufficientMaterial() ||
+      this.chess.isThreefoldRepetition() ||
+      this.chess.isDrawByFiftyMoves()
+    ) {
+      return { winner: 0, reason: 'draw' };
+    }
+    return null;
+  }
+
+  /** Full move history in PGN notation, as recorded by chess.js's own SAN
+   * tracking (accumulated incrementally in step() via this.chess.move()). */
+  getPgn(): string {
+    return this.chess.pgn();
   }
 
   // --- Internal Mapping Helpers ---

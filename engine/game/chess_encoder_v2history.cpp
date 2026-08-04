@@ -13,13 +13,15 @@ constexpr int kAuxiliaryPlanes = 7;
 // `perspective` (always the CURRENT side to move, per the reference: every
 // historical frame is colored/oriented from the mover's CURRENT perspective,
 // not that frame's own side to move) for both the own/opponent split and the
-// row orientation. Mirrors ChessEncoderV1's row-flip convention (see the
-// class comment on why that, not the reference's opposite flip, was kept).
-void encode_frame(const Chess::board_t &board, int8_t perspective, int8_t repetitions_before,
-                  float *out) {
+// row orientation. `flip_white` selects which color's rows get flipped (see
+// the class comment): false = this repo's default (Black flipped), true =
+// the reference's own convention (White flipped).
+void encode_frame(const Chess::board_t &board, int8_t perspective, bool flip_white,
+                  int8_t repetitions_before, float *out) {
+    bool flip_this_position = flip_white ? (perspective == 0) : (perspective == 1);
     for (int i = 0; i < 8; ++i) {
         for (int j = 0; j < 8; ++j) {
-            int r = (perspective == 0) ? i : (7 - i);
+            int r = flip_this_position ? (7 - i) : i;
             auto p = board[r][j];
             if (p != EMPTY) {
                 bool is_own_piece = (perspective == 0 && p > 0) || (perspective == 1 && p < 0);
@@ -37,7 +39,8 @@ void encode_frame(const Chess::board_t &board, int8_t perspective, int8_t repeti
 }
 } // namespace
 
-ChessEncoderV2History::ChessEncoderV2History(int history) : history_(history) {
+ChessEncoderV2History::ChessEncoderV2History(int history, bool flip_white)
+    : history_(history), flip_white_(flip_white) {
     if (history != 1 && history != 4 && history != 8) {
         throw std::invalid_argument("ChessEncoderV2History: history must be 1, 4, or 8, got " +
                                     std::to_string(history));
@@ -55,7 +58,7 @@ void ChessEncoderV2History::write_canonical_state(const GameState &state, float 
     // `positions()` iterator, which yields `current` before `previous[..]`).
     int8_t current_reps_before =
         static_cast<int8_t>(std::min(2, std::max(0, game.repetition_count - 1)));
-    encode_frame(game.current_board, perspective, current_reps_before, out_buffer);
+    encode_frame(game.current_board, perspective, flip_white_, current_reps_before, out_buffer);
 
     // Frames 1..history-1 come from the rolling history window; frames past
     // what Chess has actually recorded (history_count) stay all-zero, matching
@@ -64,7 +67,7 @@ void ChessEncoderV2History::write_canonical_state(const GameState &state, float 
         int hist_idx = frame - 1;
         if (hist_idx >= game.history_count)
             break;
-        encode_frame(game.history_boards[hist_idx], perspective,
+        encode_frame(game.history_boards[hist_idx], perspective, flip_white_,
                      game.history_repetitions_before[hist_idx],
                      out_buffer + static_cast<ptrdiff_t>(frame) * 14 * 64);
     }

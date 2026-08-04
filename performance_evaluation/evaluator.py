@@ -106,6 +106,14 @@ def main():
         "evaluate the chess-v2 history-encoder net.",
     )
     parser.add_argument(
+        "--chess-encoder-flip-white",
+        action="store_true",
+        help="ChessEncoderV2History only: use the engine-zoo reference's "
+        "row-flip convention (White flipped) instead of this engine's own "
+        "(Black flipped). Set for checkpoints transplanted from engine-zoo "
+        "(e.g. via convert_safetensors_v2.py).",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -136,6 +144,8 @@ def main():
     )
     if args.chess_encoder_history:
         cmd.extend(["--chess-encoder-history", str(args.chess_encoder_history)])
+    if args.chess_encoder_flip_white:
+        cmd.append("--chess-encoder-flip-white")
 
     results = []
     print(f"Starting inference server: {' '.join(cmd)}")

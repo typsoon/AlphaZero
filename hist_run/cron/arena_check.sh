@@ -34,16 +34,18 @@ OPPONENTS=(
     # double-TRT-context crash against side A. Baseline: mateusz went 15% vs
     # champ_1432 and ~even (55%) vs the current net at conversion time.
     "mateusz:$REPO/mateusz_champions/best_v1/mateusz_champion.pt_scripted:0"
-    # Same friend's chess-v2 net (Engine-Zoo generation-000100, converted
-    # 2026-07-30 via python.tools.convert_safetensors_v2 - see
-    # [[native-tensorrt-engine-loading]]). Same architecture/encoder as side A
-    # (enc 4) unlike best_v1 above, so this is a same-arch comparison, not a
-    # cross-arch one. Puzzle-eval scored notably below the current run
-    # (60.87% vs ~80-85%) at conversion time; verified not a conversion bug
-    # (SE-block shapes/semantics match exactly, value head well-calibrated on
-    # clear-cut mate threats) - genuinely a weaker checkpoint on this puzzle
-    # set. Native onnx-TRT .pt_trt, loads fine via TensorRTInferenceBackend.
-    "mateusz_v2:$REPO/mateusz_champions/best_v2/best_v2.pt_trt:4"
+    # Same friend's chess-v2 net, now on generation-000157 (superseded
+    # generation-000100/best_v2.pt_trt on 2026-08-04 - a newer, notably
+    # stronger checkpoint from the same friend run). Same architecture/encoder
+    # as side A (enc 4), so a same-arch comparison, not a cross-arch one.
+    # Converted via python.tools.convert_safetensors_v2 (see
+    # [[native-tensorrt-engine-loading]]). No .pt_trt yet (TensorRT compile
+    # hit GPU OOM from a concurrent job at conversion time) - .pt_scripted
+    # works fine and also avoids the double-TRT-context crash. Baseline: a
+    # 24-game/200-sim arena run on 2026-08-04 scored the live hist net at
+    # 33.3% (Elo -120) against this checkpoint - notably stronger than the
+    # old generation-000100 baseline it replaces.
+    "mateusz_v2:$REPO/mateusz_champions/best_v2/generation-000157.pt_scripted:4"
     # The pre-collapse peak the run was rolled back to (2026-07-29): a fixed
     # "did it climb past where we restarted?" anchor. >50% means the current net
     # has surpassed the rollback point. Same arch/encoder as side A (enc 4),

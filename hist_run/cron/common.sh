@@ -36,8 +36,13 @@ INFER_BIN="$REPO/build/inference_server/inference_server"
 
 # Only run GPU work when the card is deep enough in a trough - the history run
 # is light (~2-3 GB) but a training self-play peak plus a concurrent eval once
-# OOM-killed training (project memory 'arena-concurrent-oom').
-GPU_MIN_MB=8000
+# OOM-killed training (project memory 'arena-concurrent-oom'). Lowered from
+# 8000 on 2026-08-03: a live-measured arena run only added ~1-1.3GB on top of
+# baseline and peaked at 14.3GB/16.4GB total without incident - the old
+# threshold was sized for a single-tenant GPU, but most of the current
+# headroom pressure comes from another user's concurrent job (fluctuating
+# ~5-11GB), not from our own arena/puzzle footprint.
+GPU_MIN_MB=2500
 LOCK="$REPO/hist_run/cron/gpu.lock"
 
 gpu_free_mb() {

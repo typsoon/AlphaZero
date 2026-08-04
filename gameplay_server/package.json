@@ -13,6 +13,7 @@
     "clean:tests": "find __tests__ -type f \\( -name '*.js' -o -name '*.js.map' -o -name '*.d.ts' -o -name '*.d.ts.map' \\) -delete && rm -rf dist-tests",
     "start": "npm run build && node dist/server.js",
     "tui": "npm run build && node dist/tui/tui.js",
+    "az-uci": "npm run build && node dist/tui/az-uci.js",
     "dev": "nodemon server",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

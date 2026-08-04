@@ -107,6 +107,61 @@ TEST(ChessTests, CastlingQueenside) {
     CHECK_EQUAL(EMPTY, after[7][0]);
 }
 
+TEST(ChessTests, CastlingThroughAttackedSquareIsIllegalKingside) {
+    spdlog::info("Testing that castling kingside through an attacked square is illegal...");
+    Chess game;
+    Chess::board_t b{};
+    for (auto &row : b)
+        row.fill(EMPTY);
+    b[7][4] = W_KING; // e1 - not itself in check
+    b[7][7] = W_ROOK; // h1
+    b[0][7] = B_KING; // h8, kept out of the way
+    // Black rook on f8 attacks straight down the empty f-file to f1 - the
+    // square the king must pass through (e1->f1->g1) but never lands on or
+    // starts from, isolating the "through" case from the already-covered
+    // "into"/"out of" check cases.
+    b[0][5] = B_ROOK;
+    game.set_custom_state(b, 0);
+
+    auto actions = game.get_legal_actions();
+    int castle_action = -1;
+    for (int act : actions) {
+        ChessAction ca = Chess::decode_action(act);
+        if (ca.r1 == 7 && ca.c1 == 4 && ca.r2 == 7 && ca.c2 == 6) {
+            castle_action = act;
+            break;
+        }
+    }
+    CHECK_TRUE(castle_action == -1);
+}
+
+TEST(ChessTests, CastlingThroughAttackedSquareIsIllegalQueenside) {
+    spdlog::info("Testing that castling queenside through an attacked square is illegal...");
+    Chess game;
+    Chess::board_t b{};
+    for (auto &row : b)
+        row.fill(EMPTY);
+    b[7][4] = W_KING; // e1 - not itself in check
+    b[7][0] = W_ROOK; // a1
+    b[0][7] = B_KING; // h8, kept out of the way
+    // Black rook on d8 attacks straight down the empty d-file to d1 - the
+    // square the king must pass through (e1->d1->c1). b1 only needs to be
+    // empty for the rook's path and isn't check-relevant, so it's left alone.
+    b[0][3] = B_ROOK;
+    game.set_custom_state(b, 0);
+
+    auto actions = game.get_legal_actions();
+    int castle_action = -1;
+    for (int act : actions) {
+        ChessAction ca = Chess::decode_action(act);
+        if (ca.r1 == 7 && ca.c1 == 4 && ca.r2 == 7 && ca.c2 == 2) {
+            castle_action = act;
+            break;
+        }
+    }
+    CHECK_TRUE(castle_action == -1);
+}
+
 TEST(ChessTests, EnPassant) {
     spdlog::info("Testing en passant...");
     Chess game;

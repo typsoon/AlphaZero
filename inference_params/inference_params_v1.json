@@ -6,6 +6,6 @@
   "resignation_enabled": false,
   "dirichlet_epsilon": 0.0,
   "fpu_reduction": 0.33,
-  "network_arch": "chess_v2",
-  "chess_encoder_history": 4
+  "network_arch": "legacy",
+  "chess_encoder_history": 0
 }

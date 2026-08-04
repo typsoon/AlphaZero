@@ -149,6 +149,51 @@ TEST(ChessEncoderV2HistoryTests, ResetAndSetCustomStateClearHistory) {
     }
 }
 
+// flip_white=true must flip White's rows and leave Black's unflipped -
+// exactly the reference engine-zoo convention, and exactly the mirror image
+// of this class's default (flip_white=false: Black flipped, White not).
+TEST(ChessEncoderV2HistoryTests, FlipWhiteInvertsWhichColorGetsRowFlipped) {
+    ChessEncoderV2History native(1, /*flip_white=*/false);
+    ChessEncoderV2History reference(1, /*flip_white=*/true);
+    CHECK_FALSE(native.flip_white());
+    CHECK_TRUE(reference.flip_white());
+
+    Chess game;
+    game.step(Chess::encode_action({6, 4, 4, 4, 0})); // 1. e4 -> Black to move
+    std::vector<float> tensor_native(14 * 1 * 64 + 7 * 64);
+    std::vector<float> tensor_reference(14 * 1 * 64 + 7 * 64);
+    native.write_canonical_state(game, tensor_native.data());
+    reference.write_canonical_state(game, tensor_reference.data());
+
+    // Black to move: native flips Black's rows, reference leaves Black
+    // unflipped - the two encodings must therefore be the vertical (row)
+    // mirror of each other across every one of the 12 piece planes.
+    for (int plane = 0; plane < 12; ++plane) {
+        for (int r = 0; r < 8; ++r) {
+            for (int c = 0; c < 8; ++c) {
+                float native_val = tensor_native[plane * 64 + r * 8 + c];
+                float reference_val = tensor_reference[plane * 64 + (7 - r) * 8 + c];
+                CHECK_EQUAL(native_val, reference_val);
+            }
+        }
+    }
+
+    game.step(Chess::encode_action({1, 4, 3, 4, 0})); // 1... e5 -> White to move
+    native.write_canonical_state(game, tensor_native.data());
+    reference.write_canonical_state(game, tensor_reference.data());
+    // White to move: native leaves White unflipped, reference flips it - same
+    // mirror relationship, now triggered on the opposite side to move.
+    for (int plane = 0; plane < 12; ++plane) {
+        for (int r = 0; r < 8; ++r) {
+            for (int c = 0; c < 8; ++c) {
+                float native_val = tensor_native[plane * 64 + r * 8 + c];
+                float reference_val = tensor_reference[plane * 64 + (7 - r) * 8 + c];
+                CHECK_EQUAL(native_val, reference_val);
+            }
+        }
+    }
+}
+
 // Sweep sanity: many random-playout positions, checking the invariants that
 // must hold regardless of history length - one-hot piece planes, no
 // double-occupied square, side-to-move plane constant. Mirrors the sweep in

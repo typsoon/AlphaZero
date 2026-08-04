@@ -376,18 +376,40 @@ _CHESS_V2_KNIGHT_MOVES = [
 # underpromotions get dedicated planes in LC0's N, B, R order.
 _CHESS_V2_UNDERPROMO_INDEX = {3: 0, 4: 1, 2: 2}
 
+# engine-zoo's OWN plane geometry (crates/alphazero/src/representation/
+# chess_v2.rs: KNIGHTS array and plane()'s underpromotion `m` match). Same 8
+# knight deltas and 3 underpromotion direction groups as this repo's own
+# arrays above, but in a DIFFERENT index order - required (together with
+# ENGINE_ZOO_FLIPS_WHITE below) to correctly serve weights transplanted from
+# engine-zoo (e.g. via convert_safetensors_v2.py); using this repo's own order
+# against transplanted weights silently scrambles knight-move and
+# underpromotion policy logits. See [[chess-v2-network-port]].
+_CHESS_V2_KNIGHT_MOVES_ENGINE_ZOO = [
+    (-2, 1),
+    (-1, 2),
+    (1, 2),
+    (2, 1),
+    (2, -1),
+    (1, -2),
+    (-1, -2),
+    (-2, -1),
+]
+_CHESS_V2_UNDERPROMO_GROUP_ENGINE_ZOO = {0: 0, -1: 1, 1: 2}  # keyed by dc
 
-def _chess_v2_plane(dr: int, dc: int, promo: int):
+
+def _chess_v2_plane(dr: int, dc: int, promo: int, knight_moves, underpromo_group):
     """Returns the 73-plane index for a CANONICAL-frame move delta, or None if
     the (delta, promo) combination is geometrically impossible (such action ids
-    exist in the flat 20480 space but can never be legal)."""
+    exist in the flat 20480 space but can never be legal). knight_moves/
+    underpromo_group select this repo's own plane order or engine-zoo's (see
+    _build_chess_v2_action_maps)."""
     if promo in _CHESS_V2_UNDERPROMO_INDEX:
         # In the canonical frame the side to move always advances toward row 0.
         if dr == -1 and -1 <= dc <= 1:
-            return 64 + (dc + 1) * 3 + _CHESS_V2_UNDERPROMO_INDEX[promo]
+            return 64 + underpromo_group(dc) * 3 + _CHESS_V2_UNDERPROMO_INDEX[promo]
         return None
-    if (dr, dc) in _CHESS_V2_KNIGHT_MOVES:
-        return 56 + _CHESS_V2_KNIGHT_MOVES.index((dr, dc))
+    if (dr, dc) in knight_moves:
+        return 56 + knight_moves.index((dr, dc))
     distance = max(abs(dr), abs(dc))
     if distance == 0 or distance > 7:
         return None
@@ -397,12 +419,41 @@ def _chess_v2_plane(dr: int, dc: int, promo: int):
     return None
 
 
-def _build_chess_v2_action_maps() -> Tuple[torch.Tensor, torch.Tensor]:
+def _build_chess_v2_action_maps(
+    convention: str = "native",
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Maps every flat engine action id to its canonical-frame spatial policy
-    slot (plane*64 + from_square), once for white to move (identity geometry)
-    and once for black (rows flipped, matching write_canonical_state).
+    slot (plane*64 + from_square), once for white to move and once for black.
     Impossible ids alias slot 0; they are never legal so their logit is never
-    read."""
+    read.
+
+    convention="native" (default): this repo's own choice - white=identity
+    geometry, black=rows flipped (matching ChessEncoderV2History's default
+    flip_white=False / ChessEncoderV1) - correct for a network THIS repo
+    trains itself.
+
+    convention="engine_zoo": the reference implementation's own knight-move
+    and underpromotion-direction plane order (see the ENGINE_ZOO arrays
+    above) - required to correctly serve weights transplanted from
+    engine-zoo. Despite engine-zoo's OWN source flipping White's rank index
+    (not Black's), its rank index is numbered OPPOSITE to this engine's row
+    axis (rank_index=0 -> rank "1", vs. this engine's row=0 -> rank "8" -
+    confirmed via engine-zoo's crates/games/src/chess/notation.rs:
+    `'1' + rank.to_index()`), so translated into THIS engine's row axis,
+    engine-zoo's convention is white=identity/black=flipped - the SAME
+    row-flip assignment as "native". Only the plane geometry differs; pair
+    with the default ChessEncoderV2History(flip_white=False), NOT True."""
+    if convention == "native":
+        knight_moves = _CHESS_V2_KNIGHT_MOVES
+        underpromo_group = lambda dc: dc + 1  # noqa: E731
+    elif convention == "engine_zoo":
+        knight_moves = _CHESS_V2_KNIGHT_MOVES_ENGINE_ZOO
+        underpromo_group = lambda dc: _CHESS_V2_UNDERPROMO_GROUP_ENGINE_ZOO[dc]  # noqa: E731
+    else:
+        raise ValueError(f"unknown chess-v2 action_convention: {convention!r}")
+    # Row-flip assignment is the SAME for both conventions - see docstring.
+    white_flips = False
+
     map_white = torch.zeros(64 * 64 * 5, dtype=torch.long)
     map_black = torch.zeros(64 * 64 * 5, dtype=torch.long)
     for from_sq in range(64):
@@ -411,12 +462,20 @@ def _build_chess_v2_action_maps() -> Tuple[torch.Tensor, torch.Tensor]:
             r2, c2 = divmod(to_sq, 8)
             for promo in range(5):
                 action_id = (from_sq * 64 + to_sq) * 5 + promo
-                plane = _chess_v2_plane(r2 - r1, c2 - c1, promo)
+                dr, dc = r2 - r1, c2 - c1
+                flipped_dr = (7 - r2) - (7 - r1)
+
+                white_dr = flipped_dr if white_flips else dr
+                white_row = (7 - r1) if white_flips else r1
+                plane = _chess_v2_plane(white_dr, dc, promo, knight_moves, underpromo_group)
                 if plane is not None:
-                    map_white[action_id] = plane * 64 + r1 * 8 + c1
-                plane = _chess_v2_plane((7 - r2) - (7 - r1), c2 - c1, promo)
+                    map_white[action_id] = plane * 64 + white_row * 8 + c1
+
+                black_dr = dr if white_flips else flipped_dr
+                black_row = r1 if white_flips else (7 - r1)
+                plane = _chess_v2_plane(black_dr, dc, promo, knight_moves, underpromo_group)
                 if plane is not None:
-                    map_black[action_id] = plane * 64 + (7 - r1) * 8 + c1
+                    map_black[action_id] = plane * 64 + black_row * 8 + c1
     return map_white, map_black
 
 
@@ -458,6 +517,7 @@ class ChessAzV2Network(nn.Module):
         width: int = 8,
         action_size: int = 64 * 64 * 5,
         stm_plane_index: int = 12,
+        action_convention: str = "native",
     ):
         super().__init__()
         assert height == 8 and width == 8, "chess-v2 is an 8x8 chess-only network"
@@ -473,6 +533,11 @@ class ChessAzV2Network(nn.Module):
         # puts it later - at history*14 - so the caller building the network
         # for that encoder must pass the matching index; see injectors.py.
         self.stm_plane_index = stm_plane_index
+        # "native" (default) or "engine_zoo" - see _build_chess_v2_action_maps.
+        # Must be paired with the matching ChessEncoderV2History(flip_white=...)
+        # at inference/self-play time; this class has no way to enforce that
+        # pairing itself, since the encoder lives on the C++ side.
+        self.action_convention = action_convention
         # Read by AlphaZeroTrainer to pick the WDL cross-entropy value loss.
         self.value_head = "wdl"
 
@@ -492,7 +557,7 @@ class ChessAzV2Network(nn.Module):
         self.value_fc1 = nn.Linear(32 * height * width, 128)
         self.value_fc2 = nn.Linear(128, 3)
 
-        map_white, map_black = _build_chess_v2_action_maps()
+        map_white, map_black = _build_chess_v2_action_maps(action_convention)
         self.register_buffer("_map_white", map_white)
         self.register_buffer("_map_black", map_black)
 
@@ -582,6 +647,7 @@ class ChessAzV2Network(nn.Module):
                     "width": self._width,
                     "action_size": 64 * 64 * 5,
                     "stm_plane_index": self.stm_plane_index,
+                    "action_convention": self.action_convention,
                 },
             },
             fspath(path),

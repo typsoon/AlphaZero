@@ -66,6 +66,43 @@ describe('ChessBoard.decodeMove', () => {
   });
 });
 
+describe('ChessBoard.encodeMove', () => {
+  // Regression coverage for the UCI wrapper (tui/az-uci.ts): it receives
+  // moves as UCI strings from a GUI/opponent engine's `position ... moves
+  // ...` command and needs to turn them back into the same action indices
+  // get_legal_actions() would produce, i.e. encodeMove must be decodeMove's
+  // exact inverse.
+  it('is the inverse of decodeMove for every legal starting move', () => {
+    const board = new ChessBoard();
+    for (const action of board.get_legal_actions()) {
+      const move = board.decodeMove(action);
+      const uci = move.from + move.to + (move.promotion ?? '');
+      expect(board.encodeMove(uci)).toBe(action);
+    }
+  });
+
+  it('encodes promotion suffixes to the matching decodeMove action', () => {
+    // White pawn on a7 promotes: a7a8=q/r/n/b.
+    const board = new ChessBoard('8/P7/8/8/8/8/8/K6k w - - 0 1');
+    const legal = new Set(board.get_legal_actions());
+    for (const suffix of ['q', 'r', 'n', 'b']) {
+      const action = board.encodeMove(`a7a8${suffix}`);
+      expect(legal.has(action)).toBe(true);
+      expect(board.decodeMove(action)).toEqual({
+        from: 'a7',
+        to: 'a8',
+        promotion: suffix,
+      });
+    }
+  });
+
+  it('a non-promotion UCI move (no 5th character) encodes to promotion 0', () => {
+    const board = new ChessBoard();
+    const action = board.encodeMove('e2e4');
+    expect(board.decodeMove(action)).toEqual({ from: 'e2', to: 'e4' });
+  });
+});
+
 describe('renderBoard / describeResult', () => {
   it('renders the big board with cellHeight rows per rank plus file labels', () => {
     const lines = renderBoard(new Chess(), false, BIG_BOARD).split('\n');

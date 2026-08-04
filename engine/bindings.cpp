@@ -117,8 +117,9 @@ PYBIND11_MODULE(engine_bind, m) {
 
         py::class_<ChessEncoderV2History, StateEncoder, std::shared_ptr<ChessEncoderV2History>>(
             m, "ChessEncoderV2History")
-            .def(py::init<int>(), py::arg("history") = 4)
-            .def_property_readonly("history", &ChessEncoderV2History::history);
+            .def(py::init<int, bool>(), py::arg("history") = 4, py::arg("flip_white") = false)
+            .def_property_readonly("history", &ChessEncoderV2History::history)
+            .def_property_readonly("flip_white", &ChessEncoderV2History::flip_white);
 
         py::class_<Connect4Encoder, StateEncoder, std::shared_ptr<Connect4Encoder>>(
             m, "Connect4Encoder")

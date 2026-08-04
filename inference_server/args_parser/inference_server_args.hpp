@@ -13,6 +13,13 @@ struct InferenceServerArgs {
     // Chess only: 0 = default 19-plane ChessEncoderV1; N in {1,4,8} =
     // ChessEncoderV2History(N) for a history-encoder net.
     int chess_encoder_history{0};
+    // ChessEncoderV2History's row-flip convention: false (default) = this
+    // engine's own choice (Black flipped); true = the engine-zoo reference's
+    // own convention (White flipped). Only ever needed for a checkpoint whose
+    // weights were transplanted from engine-zoo (e.g. via
+    // convert_safetensors_v2.py) - never for a network this repo trained
+    // itself. Ignored when chess_encoder_history is 0.
+    bool chess_encoder_flip_white{false};
     // The remaining fields mirror training_params/*.json's self-play search
     // config (see AlphaZeroTrainer's self_play_and_train_loop), letting the
     // server reproduce the exact search behavior training data was generated
@@ -43,6 +50,12 @@ struct InferenceServerArgs {
     // best move" server wants, since noise is a self-play exploration device,
     // not something serving/evaluation should have on by default.
     float dirichlet_epsilon{0.25f};
+    // First-play-urgency reduction (see mcts.hpp's fpu_reduction comment): an
+    // unvisited MCTS child is scored at its parent's running value minus this
+    // amount instead of the assume-draw 0.0. 0.0 (default) preserves the
+    // server's original behavior; 0.33 matches some reference PUCT
+    // implementations (e.g. engine-zoo).
+    float fpu_reduction{0.0f};
 };
 
 void print_inference_server_usage(const char *program_name);

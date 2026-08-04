@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 
-const emit = defineEmits(['back']);
+const props = defineProps<{ initialGameId?: string }>();
+const emit = defineEmits(['back', 'gameIdChange']);
 
 const currentMode = ref<'setup' | 'game' | 'editor' | 'browser'>('setup');
 const gameId = ref<string>('');
@@ -82,7 +83,7 @@ let ws: WebSocket | null = null;
 
 const rows = 6;
 const cols = 7;
-const apiBase = '/api';
+const apiBase = '/api/connect4';
 
 function setStatus(
   message: string,
@@ -94,7 +95,7 @@ function setStatus(
 
 async function fetchAgents() {
   try {
-    const res = await fetch(`${apiBase}/agents?game=connect4`);
+    const res = await fetch(`${apiBase}/agents`);
     const data = await res.json();
     if (data.status === 'ok') {
       availableAgents.value = data.agents;
@@ -202,7 +203,6 @@ async function createNewGame(): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        game_type: 'connect4',
         p1_type: p1Type.value,
         p1_agent: p1Type.value === 'ai' ? p1Agent.value : null,
         p2_type: p2Type.value,
@@ -674,7 +674,30 @@ onMounted(async () => {
   loadSessions();
   window.addEventListener('keydown', handleKeydown);
   await fetchAgents();
+  if (props.initialGameId) {
+    joinGame(props.initialGameId);
+  }
 });
+
+// Keep the URL's /connect4/<gameId> in sync with whichever game is actually
+// being played/viewed right now - not just joined-but-parked-on-another-tab.
+const activeGameId = computed(() =>
+  currentMode.value === 'game' ? gameId.value : '',
+);
+watch(activeGameId, (id) => emit('gameIdChange', id));
+
+// Reacts to the URL changing gameId out from under us (browser back/forward)
+// rather than a join initiated from inside this component.
+watch(
+  () => props.initialGameId,
+  (id) => {
+    if (id && (id !== gameId.value || currentMode.value !== 'game')) {
+      joinGame(id);
+    } else if (!id && currentMode.value === 'game') {
+      currentMode.value = 'setup';
+    }
+  },
+);
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);

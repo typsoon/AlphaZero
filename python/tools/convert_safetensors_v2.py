@@ -17,6 +17,15 @@ Usage:
 
 Writes <output_stem>.pt, <output_stem>.pt_scripted, and (if CUDA is
 available) <output_stem>.pt_trt.
+
+IMPORTANT: the converted network is tagged action_convention="engine_zoo"
+(matching how it was actually trained - see ChessAzV2Network's
+action_convention and _build_chess_v2_action_maps's docstring). Do NOT pass
+--chess-encoder-flip-white when serving it - despite superficially opposite
+row-flip code in engine-zoo's own source, the two repos' conventions coincide
+once axis-numbering is accounted for; only the policy plane geometry
+(knight-move/underpromotion order) actually differs, and that correction is
+already baked into the converted checkpoint's action-map buffers.
 """
 
 import argparse
@@ -55,6 +64,18 @@ def convert(
     net = ChessAzV2Network(
         input_channels=input_channels,
         stm_plane_index=14 * chess_encoder_history,
+        # These weights were trained under engine-zoo's OWN policy-plane
+        # geometry (knight-move and underpromotion-direction plane order
+        # differ from this repo's own - see _build_chess_v2_action_maps).
+        # Row-flip assignment (which color's rows get flipped before
+        # encoding) is UNCHANGED from this repo's default despite engine-zoo
+        # nominally flipping the opposite color in its own source - its rank
+        # index is numbered opposite to this engine's row axis, so the two
+        # conventions coincide once translated into this engine's axis (see
+        # _build_chess_v2_action_maps's docstring). Serve with the DEFAULT
+        # ChessEncoderV2History (flip_white=False, i.e. do NOT pass
+        # --chess-encoder-flip-white on inference_server).
+        action_convention="engine_zoo",
     ).to(device)
 
     target_sd = net.state_dict()

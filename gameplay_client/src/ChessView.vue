@@ -11,6 +11,18 @@ import type {
   Square,
   Piece,
 } from 'chessboardjs';
+import {
+  squareToRowCol,
+  rowColToSquare as rowColToSquareUntyped,
+  getLegalMoves as getLegalMovesFrom,
+  resolveMyPlayerNumber,
+  computeIsMyTurn,
+  isMyPieceAt,
+  nextPremove,
+  pickPremoveAction,
+  toggleArrow,
+  type Arrow,
+} from './chessInteraction';
 
 // chessboard.js is a legacy script that attaches itself to `window.Chessboard`
 // (there is no ES module export), so we grab the factory off `window`.
@@ -21,10 +33,11 @@ type ChessboardCtor = (
   config?: BoardConfig,
 ) => ChessBoardInstance;
 
-const emit = defineEmits(['back']);
+const props = defineProps<{ initialGameId?: string }>();
+const emit = defineEmits(['back', 'gameIdChange']);
 const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
-const apiBase = '/api';
+const apiBase = '/api/chess';
 let ws: WebSocket | null = null;
 const gameId = ref<string>('');
 const playerId = ref<string>('');
@@ -33,6 +46,11 @@ const board = ref<string[][]>(
 );
 const isTerminal = ref(false);
 const statusMsg = ref('');
+// 1-indexed (1=p1/white, 2=p2/black), populated for every terminal reason
+// (checkmate, surrender) - null only for an actual draw. Kept as its own ref
+// (rather than re-parsing statusMsg's text) so the game-end sound watcher can
+// determine "did I win" reliably regardless of win_reason.
+const rawWinner = ref<number | null>(null);
 const legalActions = ref<number[]>([]);
 const currentPlayer = ref<number>(1);
 const selectedSquare = ref<{ row: number; col: number } | null>(null);
@@ -46,7 +64,31 @@ const lastAction = ref<{
   to: { row: number; col: number };
 } | null>(null);
 
-type ChessHistoryEntry = { board: string[][]; fen: string; last_action?: number };
+// Which of dbGame's two player ids is *this* browser tab, derived (not
+// stored directly) so it stays correct across page reloads / rejoining via
+// the game browser, where only `playerId` survives (from localStorage) and
+// p1_id/p2_id have to come back from the server. null = spectator or an AI
+// seat. Matches server.ts's own `.includes()` comparison style (routes/
+// game.ts's isP1/isP2 checks), not strict equality.
+const p1Id = ref<string | null>(null);
+const p2Id = ref<string | null>(null);
+const myPlayerNumber = computed<0 | 1 | null>(() =>
+  resolveMyPlayerNumber({
+    playerId: playerId.value || null,
+    p1Id: p1Id.value,
+    p2Id: p2Id.value,
+    currentPlayer: currentPlayer.value,
+  }),
+);
+const isMyTurn = computed(() =>
+  computeIsMyTurn(myPlayerNumber.value, currentPlayer.value),
+);
+
+type ChessHistoryEntry = {
+  board: string[][];
+  fen: string;
+  last_action?: number;
+};
 const history = ref<ChessHistoryEntry[]>([]);
 const historyIndex = ref<number>(0);
 const rewindMode = ref<boolean>(false);
@@ -118,9 +160,7 @@ async function fetchGames() {
     const res = await fetch(`${apiBase}/games`);
     const data = await res.json();
     if (data.status === 'ok') {
-      activeGames.value = data.games.filter(
-        (g: GameInfo) => g.gameType === 'chess',
-      );
+      activeGames.value = data.games;
     }
   } catch (e) {
     console.error(e);
@@ -134,6 +174,10 @@ function joinGame(id: string) {
   rewindMode.value = false;
   history.value = [];
   statusMsg.value = '';
+  premove.value = null;
+  arrows.value = [];
+  p1Id.value = null;
+  p2Id.value = null;
   currentMode.value = 'game';
   connectWebSocket();
   fetchStatus();
@@ -306,7 +350,6 @@ async function evaluateEditorPosition() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        game_type: 'chess',
         agent: editorAgent.value,
         fen: editorFenInput.value,
       }),
@@ -623,17 +666,193 @@ let pendingOptimisticBoard: string[][] | null = null;
 // the same treatment for the same reason (its touch-drag also swallows taps).
 let pointerStartInfo: { x: number; y: number } | null = null;
 
-/** Our internal board is a string[][] grid with row 0 = rank 8, col 0 = file a. */
-function squareToRowCol(square: string): { row: number; col: number } {
-  const col = square.charCodeAt(0) - 97; // 'a' -> 0
-  const rank = parseInt(square[1], 10);
-  return { row: 8 - rank, col };
+// --- Premoves ---
+// Queued while it's *not* my turn; fired the instant it becomes my turn if it
+// still matches a legal action, silently dropped otherwise (standard
+// lichess/chess.com behavior - a premove is a bet on the opponent's reply,
+// not a validated move). We deliberately don't try to validate it against a
+// hypothetical future position client-side - there's no client-side rules
+// engine here (legality always comes from the server), so the only honest
+// thing to do is record the intent and let the real legalActions list
+// (fetched once it's actually our turn) decide if it still makes sense.
+const premove = ref<{
+  from: { row: number; col: number };
+  to: { row: number; col: number };
+} | null>(null);
+
+function isMyPiece(row: number, col: number): boolean {
+  return isMyPieceAt(board.value[row]?.[col], myPlayerNumber.value);
 }
 
+function queuePremove(
+  from: { row: number; col: number },
+  to: { row: number; col: number },
+) {
+  premove.value = nextPremove(from, to);
+}
+
+function cancelPremove() {
+  premove.value = null;
+}
+
+// Fires the moment it's genuinely our turn again - watches currentPlayer
+// rather than isMyTurn directly so it still runs (and clears the premove)
+// even if myPlayerNumber briefly reads null (e.g. mid-reconnect).
+watch(currentPlayer, () => {
+  if (!premove.value || !isMyTurn.value) return;
+  const { from, to } = premove.value;
+  premove.value = null;
+  const actions = getLegalMoves(from.row, from.col, to.row, to.col);
+  const chosen = pickPremoveAction(actions);
+  if (chosen === null) return; // opponent didn't cooperate - just drop it
+  makeMove(chosen);
+});
+
+// --- Arrows (right-click-drag annotations) ---
+const arrows = ref<Arrow[]>([]);
+let arrowDragStart: { row: number; col: number } | null = null;
+
+function onBoardContextMenu(e: MouseEvent) {
+  e.preventDefault();
+}
+
+function onBoardRightMouseDown(e: MouseEvent) {
+  if (e.button !== 2) return;
+  arrowDragStart = rowColFromPoint(e.clientX, e.clientY);
+}
+
+function onBoardRightMouseUp(e: MouseEvent) {
+  if (e.button !== 2) return;
+  const start = arrowDragStart;
+  arrowDragStart = null;
+  if (!start) return;
+  const end = rowColFromPoint(e.clientX, e.clientY);
+  if (!end) return;
+  if (start.row === end.row && start.col === end.col) {
+    // A plain right-click (no drag) clears the board, matching the
+    // lichess/chess.com convention.
+    arrows.value = [];
+    return;
+  }
+  const from = rowColToSquareUntyped(start.row, start.col);
+  const to = rowColToSquareUntyped(end.row, end.col);
+  arrows.value = toggleArrow(arrows.value, from, to);
+}
+
+// Arrow endpoints as percentages of the board, accounting for orientation -
+// SVG overlay coordinates rather than raw row/col so they stay correct
+// whether the board is flipped or not.
+const arrowLines = computed(() => {
+  const flipped = isBoardFlipped.value;
+  const centerPct = (row: number, col: number) => {
+    const displayRow = flipped ? 7 - row : row;
+    const displayCol = flipped ? 7 - col : col;
+    return { x: (displayCol + 0.5) * 12.5, y: (displayRow + 0.5) * 12.5 };
+  };
+  return arrows.value.map((a) => {
+    const from = squareToRowCol(a.from);
+    const to = squareToRowCol(a.to);
+    const p1 = centerPct(from.row, from.col);
+    const p2 = centerPct(to.row, to.col);
+    return { ...p1, x2: p2.x, y2: p2.y, key: `${a.from}-${a.to}` };
+  });
+});
+
+// --- Sounds ---
+// Synthesized via the Web Audio API rather than shipping audio asset files -
+// a handful of short oscillator tones cover move/capture/game-end without
+// needing binary assets in the repo or a licensing question over borrowed
+// chess-site sound sets.
+const soundEnabled = ref<boolean>(
+  (localStorage.getItem('chessSoundEnabled') ?? 'true') === 'true',
+);
+watch(soundEnabled, (v) => {
+  localStorage.setItem('chessSoundEnabled', String(v));
+});
+let audioCtx: AudioContext | null = null;
+
+function playTone(
+  freq: number,
+  duration: number,
+  startAt = 0,
+  type: OscillatorType = 'sine',
+  vol = 0.12,
+) {
+  if (!soundEnabled.value) return;
+  try {
+    audioCtx ??= new (
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext
+    )();
+    if (audioCtx.state === 'suspended') void audioCtx.resume();
+    const t0 = audioCtx.currentTime + startAt;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, t0);
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration);
+  } catch {
+    // Audio unavailable (autoplay policy before any user gesture, etc.) -
+    // sound is a nicety, never worth surfacing an error for.
+  }
+}
+
+function playMoveSound(isCapture: boolean) {
+  if (isCapture) {
+    playTone(220, 0.1, 0, 'square', 0.07);
+    playTone(160, 0.14, 0.02, 'square', 0.06);
+  } else {
+    playTone(523, 0.09, 0, 'sine', 0.09);
+  }
+}
+
+function playGameEndSound(iWon: boolean | null) {
+  if (iWon === true) {
+    [523, 659, 784].forEach((f, i) => playTone(f, 0.18, i * 0.11, 'sine', 0.1));
+  } else if (iWon === false) {
+    [392, 330, 262].forEach((f, i) => playTone(f, 0.22, i * 0.13, 'sine', 0.1));
+  } else {
+    [440, 440].forEach((f, i) => playTone(f, 0.15, i * 0.18, 'triangle', 0.08));
+  }
+}
+
+// Dedupe key so a redundant state push (reconnect, redundant broadcast) for
+// the same move doesn't replay its sound.
+let lastSoundedMoveKey: string | null = null;
+watch(board, (newBoard, oldBoard) => {
+  if (rewindMode.value || !lastAction.value || !oldBoard) return;
+  const { from, to } = lastAction.value;
+  const key = `${from.row},${from.col}-${to.row},${to.col}:${newBoard.length}`;
+  if (key === lastSoundedMoveKey) return;
+  lastSoundedMoveKey = key;
+  const wasCapture = (oldBoard[to.row]?.[to.col] ?? ' ') !== ' ';
+  playMoveSound(wasCapture);
+});
+
+watch(isTerminal, (terminal, wasTerminal) => {
+  if (!terminal || wasTerminal || rewindMode.value) return;
+  // rawWinner is 1-indexed (1=p1/white, 2=p2/black) and populated for every
+  // terminal reason (checkmate, surrender), not just actual resignation
+  // despite the server field's name - see statusMsg's own surrender_winner
+  // handling above, which branches on win_reason but reads this same field
+  // for checkmate too. null only for an actual draw.
+  if (myPlayerNumber.value === null || rawWinner.value === null) {
+    playGameEndSound(null);
+  } else {
+    playGameEndSound(rawWinner.value - 1 === myPlayerNumber.value);
+  }
+});
+
+// squareToRowCol/rowColToSquare's actual logic lives in chessInteraction.ts
+// (pure, unit-tested); this just re-adds chessboard.js's branded `Square`
+// enum type at the call sites that need it.
 function rowColToSquare(row: number, col: number): Square {
-  const file = String.fromCharCode(97 + col);
-  const rank = 8 - row;
-  return `${file}${rank}` as Square;
+  return rowColToSquareUntyped(row, col) as Square;
 }
 
 function cbPieceTheme(piece: string) {
@@ -757,10 +976,12 @@ function onBoardTouchEnd(e: TouchEvent) {
 }
 
 function onBoardMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return; // right-click is arrow-drawing, see onBoardRightMouseDown
   pointerStartInfo = { x: e.clientX, y: e.clientY };
 }
 
 function onBoardMouseUp(e: MouseEvent) {
+  if (e.button !== 0) return;
   const start = pointerStartInfo;
   pointerStartInfo = null;
   if (!start) return;
@@ -784,12 +1005,24 @@ function initChessBoard() {
     onDragStart: ((source: string, _piece: string) => {
       if (isTerminal.value || rewindMode.value) return false;
       const { row, col } = squareToRowCol(source);
-      return squareHasLegalMoves(row, col);
+      if (isMyTurn.value) return squareHasLegalMoves(row, col);
+      // Not my turn: only allow starting a drag on my own piece, to queue a
+      // premove. Can't check squareHasLegalMoves here - legalActions reflects
+      // the *opponent's* legal moves right now, not a hypothetical future
+      // position for me.
+      return isMyPiece(row, col);
     }) as unknown as NonNullable<BoardConfig['onDragStart']>,
     onDrop: ((source: string, target: string) => {
       if (isTerminal.value || rewindMode.value) return 'snapback';
       const from = squareToRowCol(source);
       const to = squareToRowCol(target);
+      if (!isMyTurn.value) {
+        // Premove drag: always snaps back visually (see the premove-highlight
+        // CSS instead of an optimistic piece move - simpler than fighting the
+        // real board push that'll land before this ever fires for real).
+        queuePremove(from, to);
+        return 'snapback';
+      }
       const actions = getLegalMoves(from.row, from.col, to.row, to.col);
       if (actions.length === 0) return 'snapback';
       if (actions.length === 1 && actions[0] % 5 === 0) {
@@ -842,6 +1075,14 @@ function initChessBoard() {
   });
   containerEl.addEventListener('touchend', onBoardTouchEnd, { passive: false });
 
+  // Right-click drag draws/erases an arrow; a plain right-click clears them
+  // all. contextmenu must be suppressed or the browser's menu pops up on
+  // release. mouseup bound on window for the same reason as onBoardMouseUp
+  // above (a right-drag can end past the container's edge).
+  containerEl.addEventListener('contextmenu', onBoardContextMenu);
+  containerEl.addEventListener('mousedown', onBoardRightMouseDown);
+  window.addEventListener('mouseup', onBoardRightMouseUp);
+
   window.addEventListener('resize', onWindowResize);
 }
 
@@ -852,11 +1093,19 @@ function onWindowResize() {
 function destroyChessBoard() {
   window.removeEventListener('resize', onWindowResize);
   window.removeEventListener('mouseup', onBoardMouseUp);
+  window.removeEventListener('mouseup', onBoardRightMouseUp);
   if (boardContainer.value) {
     boardContainer.value.removeEventListener('mousedown', onBoardMouseDown);
     boardContainer.value.removeEventListener('touchstart', onBoardTouchStart);
     boardContainer.value.removeEventListener('touchend', onBoardTouchEnd);
+    boardContainer.value.removeEventListener('contextmenu', onBoardContextMenu);
+    boardContainer.value.removeEventListener(
+      'mousedown',
+      onBoardRightMouseDown,
+    );
   }
+  arrows.value = [];
+  premove.value = null;
   cbBoard?.destroy();
   cbBoard = null;
 }
@@ -882,11 +1131,25 @@ watch(lastAction, (action) => {
   if (!boardContainer.value) return;
   const $container = $(boardContainer.value);
   $container.find('.last-move-highlight').removeClass('last-move-highlight');
+  // Arrows are per-position annotations, same convention as lichess/chess.com
+  // - any move landing (either side) invalidates them.
+  arrows.value = [];
   if (!action) return;
   const fromSquare = rowColToSquare(action.from.row, action.from.col);
   const toSquare = rowColToSquare(action.to.row, action.to.col);
   $container.find(`.square-${fromSquare}`).addClass('last-move-highlight');
   $container.find(`.square-${toSquare}`).addClass('last-move-highlight');
+});
+
+watch(premove, (pm) => {
+  if (!boardContainer.value) return;
+  const $container = $(boardContainer.value);
+  $container.find('.premove-highlight').removeClass('premove-highlight');
+  if (!pm) return;
+  const fromSquare = rowColToSquare(pm.from.row, pm.from.col);
+  const toSquare = rowColToSquare(pm.to.row, pm.to.col);
+  $container.find(`.square-${fromSquare}`).addClass('premove-highlight');
+  $container.find(`.square-${toSquare}`).addClass('premove-highlight');
 });
 
 function handleKeydown(e: KeyboardEvent) {
@@ -899,7 +1162,30 @@ onMounted(() => {
   loadSessions();
   fetchAgents();
   window.addEventListener('keydown', handleKeydown);
+  if (props.initialGameId) {
+    joinGame(props.initialGameId);
+  }
 });
+
+// Keep the URL's /chess/<gameId> in sync with whichever game is actually
+// being played/viewed right now - not just joined-but-parked-on-another-tab.
+const activeGameId = computed(() =>
+  currentMode.value === 'game' ? gameId.value : '',
+);
+watch(activeGameId, (id) => emit('gameIdChange', id));
+
+// Reacts to the URL changing gameId out from under us (browser back/forward)
+// rather than a join initiated from inside this component.
+watch(
+  () => props.initialGameId,
+  (id) => {
+    if (id && (id !== gameId.value || currentMode.value !== 'game')) {
+      joinGame(id);
+    } else if (!id && currentMode.value === 'game') {
+      currentMode.value = 'setup';
+    }
+  },
+);
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
@@ -911,7 +1197,7 @@ onUnmounted(() => {
 
 async function fetchAgents() {
   try {
-    const res = await fetch(`${apiBase}/agents?game=chess`);
+    const res = await fetch(`${apiBase}/agents`);
     const data = await res.json();
     if (data.status === 'ok') {
       availableAgents.value = data.agents;
@@ -935,7 +1221,6 @@ async function createNewGame() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        game_type: 'chess',
         p1_type: p1Type.value,
         p1_agent: p1Type.value === 'ai' ? p1Agent.value : null,
         p2_type: p2Type.value,
@@ -945,6 +1230,8 @@ async function createNewGame() {
     const data = await res.json();
     if (data.status === 'ok') {
       gameId.value = data.game_id;
+      p1Id.value = data.p1_id ?? null;
+      p2Id.value = data.p2_id ?? null;
       // Depending on who we are playing, save our player id
       if (p1Type.value === 'human') {
         playerId.value = data.p1_id;
@@ -959,6 +1246,8 @@ async function createNewGame() {
       rewindMode.value = false;
       history.value = [];
       statusMsg.value = '';
+      premove.value = null;
+      arrows.value = [];
       currentMode.value = 'game';
       connectWebSocket();
       fetchStatus();
@@ -998,6 +1287,7 @@ function connectWebSocket() {
       } else {
         lastAction.value = null;
       }
+      rawWinner.value = msg.data.surrender_winner ?? null;
       if (msg.data.surrender_winner !== null) {
         if (msg.data.win_reason === 'surrender') {
           statusMsg.value = `Game Over. Player ${msg.data.surrender_winner === 1 ? '1' : '2'} wins by surrender!`;
@@ -1032,6 +1322,8 @@ async function fetchStatus() {
       isTerminal.value = data.is_terminal;
       legalActions.value = data.legal_actions ?? [];
       currentPlayer.value = data.current_player;
+      p1Id.value = data.p1_id ?? p1Id.value;
+      p2Id.value = data.p2_id ?? p2Id.value;
       if (data.history) {
         history.value = data.history;
         if (!rewindMode.value) historyIndex.value = history.value.length - 1;
@@ -1048,6 +1340,7 @@ async function fetchStatus() {
       } else {
         lastAction.value = null;
       }
+      rawWinner.value = data.surrender_winner ?? null;
       if (data.surrender_winner !== null) {
         if (data.win_reason === 'surrender') {
           statusMsg.value = `Game Over. Player ${data.surrender_winner === 1 ? '1' : '2'} wins by surrender!`;
@@ -1071,6 +1364,17 @@ function startRewind() {
   rewindMode.value = true;
   historyIndex.value = history.value.length - 1;
   selectedSquare.value = null;
+  premove.value = null;
+  arrows.value = [];
+}
+
+function exportPgn() {
+  if (!gameId.value) return;
+  // The server sets Content-Disposition: attachment, so a plain navigating
+  // link (no fetch/Blob dance) is enough to trigger the browser's download.
+  const a = document.createElement('a');
+  a.href = `${apiBase}/game/${gameId.value}/pgn`;
+  a.click();
 }
 
 function stepBackward() {
@@ -1108,14 +1412,7 @@ function getLegalMoves(
   toRow: number,
   toCol: number,
 ): number[] {
-  const from = fromRow * 8 + fromCol;
-  const to = toRow * 8 + toCol;
-  return legalActions.value.filter((action) => {
-    const act = Math.floor(action / 5);
-    const actTo = act % 64;
-    const actFrom = Math.floor(act / 64);
-    return actFrom === from && actTo === to;
-  });
+  return getLegalMovesFrom(legalActions.value, fromRow, fromCol, toRow, toCol);
 }
 
 function getPromotionImage(action: number) {
@@ -1135,8 +1432,34 @@ function selectPromotion(action: number) {
   selectedSquare.value = null;
 }
 
+function handlePremoveClick(row: number, col: number) {
+  if (!selectedSquare.value) {
+    if (isMyPiece(row, col)) {
+      selectedSquare.value = { row, col };
+    } else {
+      cancelPremove();
+    }
+    return;
+  }
+  if (selectedSquare.value.row === row && selectedSquare.value.col === col) {
+    selectedSquare.value = null;
+    return;
+  }
+  if (isMyPiece(row, col)) {
+    selectedSquare.value = { row, col }; // switch to this piece instead
+    return;
+  }
+  queuePremove(selectedSquare.value, { row, col });
+  selectedSquare.value = null;
+}
+
 function handleSquareClick(row: number, col: number) {
   if (isTerminal.value || rewindMode.value) return;
+
+  if (!isMyTurn.value) {
+    handlePremoveClick(row, col);
+    return;
+  }
 
   if (!selectedSquare.value) {
     if (squareHasLegalMoves(row, col)) selectedSquare.value = { row, col };
@@ -1219,6 +1542,13 @@ async function resign(): Promise<void> {
         "
       >
         <button class="btn" @click="emit('back')">Back to Menu</button>
+        <button
+          class="btn"
+          :title="soundEnabled ? 'Mute sounds' : 'Unmute sounds'"
+          @click="soundEnabled = !soundEnabled"
+        >
+          {{ soundEnabled ? '🔊' : '🔇' }}
+        </button>
         <button
           class="btn"
           :class="{ primary: currentMode === 'setup' }"
@@ -1373,6 +1703,13 @@ async function resign(): Promise<void> {
         >
           Review Game
         </button>
+        <button
+          v-if="isTerminal && history.length > 0"
+          class="btn"
+          @click="exportPgn"
+        >
+          Export PGN
+        </button>
       </div>
 
       <!-- Rewind Controls -->
@@ -1409,7 +1746,42 @@ async function resign(): Promise<void> {
       </div>
 
       <div class="chess-board-wrap">
-        <div ref="boardContainer" class="chess-board"></div>
+        <div class="chess-board-stack">
+          <div ref="boardContainer" class="chess-board"></div>
+          <!-- Sibling of boardContainer, not a child - chessboard.js owns and
+               rebuilds that div's own contents, so anything we add inside it
+               risks being wiped on the next position() call. -->
+          <svg
+            class="arrow-overlay"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+          >
+            <defs>
+              <marker
+                id="chess-arrowhead"
+                markerWidth="3"
+                markerHeight="3"
+                refX="1.6"
+                refY="1.5"
+                orient="auto"
+              >
+                <path d="M0,0 L3,1.5 L0,3 z" fill="#f59e0bdd" />
+              </marker>
+            </defs>
+            <line
+              v-for="a in arrowLines"
+              :key="a.key"
+              :x1="a.x"
+              :y1="a.y"
+              :x2="a.x2"
+              :y2="a.y2"
+              stroke="#f59e0bdd"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              marker-end="url(#chess-arrowhead)"
+            />
+          </svg>
+        </div>
       </div>
 
       <!-- Last AI move's evaluation (policy/value pushed alongside its move) -->
@@ -1811,9 +2183,26 @@ select {
   justify-content: center;
 }
 
-.chess-board {
+.chess-board-stack {
+  position: relative;
   width: min(80vw, 600px);
+}
+
+.chess-board {
+  width: 100%;
   user-select: none;
+}
+
+/* Matches :deep(.board-b72b1)'s hardcoded 8px border below, so the overlay's
+   coordinate grid lines up with the actual squares rather than the board's
+   outer edge. */
+.arrow-overlay {
+  position: absolute;
+  inset: 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  pointer-events: none;
+  z-index: 20;
 }
 
 /*
@@ -1865,6 +2254,13 @@ select {
 
 :deep(.last-move-highlight) {
   background-color: rgba(155, 199, 0, 0.41) !important;
+}
+
+/* A queued premove's source/destination squares - a distinct color from
+   last-move/selected so a queued-but-not-yet-fired move reads as a different
+   state, not "you already moved". */
+:deep(.premove-highlight) {
+  box-shadow: inset 0 0 0 4px rgba(239, 68, 68, 0.65);
 }
 
 .modal-overlay {

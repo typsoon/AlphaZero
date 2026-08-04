@@ -67,9 +67,10 @@ class Connect4ModelWrapper final : public ModelWrapper {
     Connect4ModelWrapper(std::string network_path, std::string device, int search_depth,
                          int batch_size, bool use_gumbel_search, int max_num_considered_actions,
                          float full_search_probability, int fast_mcts_simulations,
-                         float dirichlet_epsilon)
+                         float dirichlet_epsilon, float fpu_reduction)
         : device(torch::Device(std::move(device))),
-          mcts(std::move(network_path), this->device, 1.25f, 19652.0f, dirichlet_epsilon),
+          mcts(std::move(network_path), this->device, 1.25f, 19652.0f, dirichlet_epsilon, 0.3f,
+               default_arena_size_in_bytes, fpu_reduction),
           search_depth(search_depth), batch_size(batch_size), use_gumbel_search(use_gumbel_search),
           max_num_considered_actions(max_num_considered_actions),
           full_search_probability(full_search_probability),
@@ -126,13 +127,15 @@ class ChessModelWrapper final : public ModelWrapper {
     ChessModelWrapper(std::string network_path, std::string device, int search_depth,
                       int batch_size, int chess_encoder_history, bool use_gumbel_search,
                       int max_num_considered_actions, float full_search_probability,
-                      int fast_mcts_simulations, float dirichlet_epsilon)
+                      int fast_mcts_simulations, float dirichlet_epsilon,
+                      bool chess_encoder_flip_white, float fpu_reduction)
         : device(torch::Device(std::move(device))),
           mcts(std::move(network_path), this->device, 1.25f, 19652.0f, dirichlet_epsilon, 0.3f,
-               default_arena_size_in_bytes, 0.0f,
-               [chess_encoder_history]() -> std::shared_ptr<StateEncoder> {
+               default_arena_size_in_bytes, fpu_reduction,
+               [chess_encoder_history, chess_encoder_flip_white]() -> std::shared_ptr<StateEncoder> {
                    if (chess_encoder_history > 0) {
-                       return std::make_shared<ChessEncoderV2History>(chess_encoder_history);
+                       return std::make_shared<ChessEncoderV2History>(chess_encoder_history,
+                                                                      chess_encoder_flip_white);
                    }
                    return nullptr;
                }()),
@@ -152,22 +155,37 @@ class ChessModelWrapper final : public ModelWrapper {
     }
     std::string predict(const std::string &request_payload) override {
         const auto payload_json = nlohmann::json::parse(request_payload);
-        const auto &board_json = payload_json.at("board");
-
-        Chess::board_t board = {};
-        for (int r = 0; r < 8; r++) {
-            for (int c = 0; c < 8; c++) {
-                board[r][c] = board_json[r][c].get<int>();
-            }
-        }
-
-        int8_t player = payload_json.at("player").get<int>();
-        int8_t en_passant = payload_json.at("en_passant").get<int>();
-        auto castling = payload_json.at("castling").get<std::vector<int>>();
 
         Chess game;
-        game.set_custom_state(board, player, en_passant, castling[0], castling[1], castling[2],
-                              castling[3], castling[4], castling[5]);
+        // "history" (optional): the ordered actions actually played so far this
+        // game, from the starting position. Replaying them (rather than just
+        // loading the current board/player/en_passant/castling below) is what
+        // lets Chess's own position_history/repetition_count/history_boards -
+        // and therefore threefold-repetition detection and
+        // ChessEncoderV2History's history planes - see real prior positions
+        // instead of always looking like the game just started. Absent/empty
+        // for puzzle/editor positions, which have no real game history.
+        if (payload_json.contains("history") && !payload_json.at("history").empty()) {
+            for (int action : payload_json.at("history").get<std::vector<int>>()) {
+                game.step(action);
+            }
+        } else {
+            const auto &board_json = payload_json.at("board");
+
+            Chess::board_t board = {};
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    board[r][c] = board_json[r][c].get<int>();
+                }
+            }
+
+            int8_t player = payload_json.at("player").get<int>();
+            int8_t en_passant = payload_json.at("en_passant").get<int>();
+            auto castling = payload_json.at("castling").get<std::vector<int>>();
+
+            game.set_custom_state(board, player, en_passant, castling[0], castling[1],
+                                  castling[2], castling[3], castling[4], castling[5]);
+        }
 
         auto start = std::chrono::high_resolution_clock::now();
         const auto [policy, value] =
@@ -177,7 +195,7 @@ class ChessModelWrapper final : public ModelWrapper {
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         spdlog::info("Chess prediction finished in {} ms (batch size: {})", duration.count(),
-                     board_json.size());
+                     batch_size);
 
         return encode_payload(policy, value);
     }
@@ -188,20 +206,21 @@ class ChessModelWrapper final : public ModelWrapper {
 std::shared_ptr<ModelWrapper> create_connect4_model_wrapper(
     const std::string &network_path, const std::string &device, int mcts_search_depth,
     int mcts_batch_size, bool use_gumbel_search, int max_num_considered_actions,
-    float full_search_probability, int fast_mcts_simulations, float dirichlet_epsilon) {
+    float full_search_probability, int fast_mcts_simulations, float dirichlet_epsilon,
+    float fpu_reduction) {
     return std::make_shared<Connect4ModelWrapper>(
         network_path, device, mcts_search_depth, mcts_batch_size, use_gumbel_search,
         max_num_considered_actions, full_search_probability, fast_mcts_simulations,
-        dirichlet_epsilon);
+        dirichlet_epsilon, fpu_reduction);
 }
 
 std::shared_ptr<ModelWrapper> create_chess_model_wrapper(
     const std::string &network_path, const std::string &device, int mcts_search_depth,
     int mcts_batch_size, int chess_encoder_history, bool use_gumbel_search,
     int max_num_considered_actions, float full_search_probability, int fast_mcts_simulations,
-    float dirichlet_epsilon) {
+    float dirichlet_epsilon, bool chess_encoder_flip_white, float fpu_reduction) {
     return std::make_shared<ChessModelWrapper>(
         network_path, device, mcts_search_depth, mcts_batch_size, chess_encoder_history,
         use_gumbel_search, max_num_considered_actions, full_search_probability,
-        fast_mcts_simulations, dirichlet_epsilon);
+        fast_mcts_simulations, dirichlet_epsilon, chess_encoder_flip_white, fpu_reduction);
 }

@@ -64,6 +64,10 @@ void print_inference_server_usage(const char *program_name) {
               << "  --mcts-search-depth <depth> MCTS search depth (default: 800)\n"
               << "  --chess-encoder-history <N> Chess only: 0 (default) = 19-plane "
                  "ChessEncoderV1; 1/4/8 = ChessEncoderV2History(N) for a history-encoder net\n"
+              << "  --chess-encoder-flip-white  ChessEncoderV2History only: use the "
+                 "engine-zoo reference's row-flip convention (White flipped) instead of "
+                 "this engine's own (Black flipped). Only for checkpoints transplanted "
+                 "from engine-zoo (default: off)\n"
               << "  --use-gumbel-search     Use search_gumbel() (Gumbel-Top-k root "
                  "sampling) instead of plain-PUCT search() (default: off)\n"
               << "  --max-num-considered-actions <N> Gumbel-Top-k candidate set size, "
@@ -76,6 +80,10 @@ void print_inference_server_usage(const char *program_name) {
               << "  --dirichlet-epsilon <p> Weight of Dirichlet root noise in plain-PUCT "
                  "search() (default: 0.25, matches MCTS's own default); 0.0 disables root "
                  "noise entirely (ignored by --use-gumbel-search)\n"
+              << "  --fpu-reduction <p>     First-play-urgency reduction: an unvisited "
+                 "MCTS child is scored at its parent's value minus this amount (default: "
+                 "0.0, the assume-draw original; 0.33 matches some reference PUCT "
+                 "implementations)\n"
               << "  -h, --help              Show this help message\n";
 }
 
@@ -142,6 +150,10 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
             args.use_gumbel_search = true;
             continue;
         }
+        if (arg == "--chess-encoder-flip-white") {
+            args.chess_encoder_flip_white = true;
+            continue;
+        }
         std::string max_considered_str;
         if (read_option_value(i, argc, argv, arg, "--max-num-considered-actions",
                               max_considered_str, error)) {
@@ -190,6 +202,16 @@ bool parse_inference_server_args(int argc, char *argv[], InferenceServerArgs &ar
             }
             if (args.dirichlet_epsilon < 0.0f || args.dirichlet_epsilon > 1.0f) {
                 error = "--dirichlet-epsilon must be between 0.0 and 1.0";
+                return false;
+            }
+            continue;
+        }
+        std::string fpu_reduction_str;
+        if (read_option_value(i, argc, argv, arg, "--fpu-reduction", fpu_reduction_str, error)) {
+            try {
+                args.fpu_reduction = std::stof(fpu_reduction_str);
+            } catch (const std::exception &) {
+                error = "Invalid value for --fpu-reduction: " + fpu_reduction_str;
                 return false;
             }
             continue;

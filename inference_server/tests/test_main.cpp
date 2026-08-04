@@ -46,6 +46,47 @@ TEST(SchemaValidatorTestGroup, InvalidPayloadIsRejected) {
     CHECK_FALSE(validator->is_a_valid_boardstate(payload_wrong_type));
 }
 
+TEST_GROUP(ChessSchemaValidatorTestGroup) {
+    std::shared_ptr<SchemaValidator> validator;
+
+    void setup() {
+        std::string schema_path = std::string(ALPHAZERO_REPO_ROOT) + "/game_states/chess.json";
+        validator = get_schema_validator(schema_path);
+    }
+
+    void teardown() {}
+};
+
+// The "history" field (see ChessModelWrapper::predict() in model_wrapper.cpp)
+// is optional: puzzle/editor positions with no real game history omit it
+// entirely, and the schema must still accept the legacy board-only payload.
+TEST(ChessSchemaValidatorTestGroup, PayloadWithoutHistoryIsAccepted) {
+    std::string payload = R"({
+        "board": [
+            [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0]
+        ],
+        "player": 0,
+        "en_passant": -1,
+        "castling": [0, 0, 0, 0, 0, 0]
+    })";
+    CHECK_TRUE(validator->is_a_valid_boardstate(payload));
+}
+
+TEST(ChessSchemaValidatorTestGroup, PayloadWithHistoryIsAccepted) {
+    std::string payload = R"({
+        "board": [
+            [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0]
+        ],
+        "player": 1,
+        "en_passant": -1,
+        "castling": [0, 0, 0, 0, 0, 0],
+        "history": [14400, 20065]
+    })";
+    CHECK_TRUE(validator->is_a_valid_boardstate(payload));
+}
+
 TEST_GROUP(ModelWrapperTestGroup) {
     std::shared_ptr<ModelWrapper> wrapper;
 

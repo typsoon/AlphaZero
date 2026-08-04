@@ -3,12 +3,16 @@ import fastify from 'fastify';
 import gameRoutes from '../../src/routes/game.js';
 
 describe('Game Routes Integration', () => {
+  // Registered with the real `/:gameType` prefix - matches server.ts's
+  // actual setup (`server.register(gameRoutes, { prefix: '/:gameType' })`).
+  // gameType comes from the URL now, not a `game_type` request-body field
+  // (routes/game.ts's handlers read `req.params.gameType`).
   const app = fastify();
   let gameId = '';
   let playerId = '';
 
   beforeAll(async () => {
-    app.register(gameRoutes);
+    app.register(gameRoutes, { prefix: '/:gameType' });
     await app.ready();
   });
 
@@ -16,10 +20,10 @@ describe('Game Routes Integration', () => {
     await app.close();
   });
 
-  test('POST /game/create creates a game', async () => {
+  test('POST /connect4/game/create creates a game', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/game/create',
+      url: '/connect4/game/create',
     });
 
     expect(response.statusCode).toBe(200);
@@ -31,10 +35,10 @@ describe('Game Routes Integration', () => {
     playerId = body.p1_id;
   });
 
-  test('GET /game/:id/status returns valid game state schema', async () => {
+  test('GET /connect4/game/:id/status returns valid game state schema', async () => {
     const response = await app.inject({
       method: 'GET',
-      url: `/game/${gameId}/status`,
+      url: `/connect4/game/${gameId}/status`,
     });
 
     expect(response.statusCode).toBe(200);
@@ -47,10 +51,10 @@ describe('Game Routes Integration', () => {
     expect(body.board).toHaveLength(6);
   });
 
-  test('POST /game/:id/move with invalid column returns 400 Bad Request', async () => {
+  test('POST /connect4/game/:id/move with invalid column returns 400 Bad Request', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: `/game/${gameId}/move`,
+      url: `/connect4/game/${gameId}/move`,
       payload: { column: 99, player_id: playerId },
     });
 
@@ -60,20 +64,20 @@ describe('Game Routes Integration', () => {
     expect(body.message).toBe('Invalid action');
   });
 
-  test('POST /game/:id/move with missing player_id returns 401', async () => {
+  test('POST /connect4/game/:id/move with missing player_id returns 401', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: `/game/${gameId}/move`,
+      url: `/connect4/game/${gameId}/move`,
       payload: { column: 3 },
     });
 
     expect(response.statusCode).toBe(401);
   });
 
-  test('POST /game/:id/reset resets the game successfully', async () => {
+  test('POST /connect4/game/:id/reset resets the game successfully', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: `/game/${gameId}/reset`,
+      url: `/connect4/game/${gameId}/reset`,
       payload: { player_id: playerId },
     });
 
@@ -83,10 +87,10 @@ describe('Game Routes Integration', () => {
     expect(body.message).toBe('Game reset');
   });
 
-  test('POST /game/:id/move handles both offline and online AI server gracefully', async () => {
+  test('POST /connect4/game/:id/move handles both offline and online AI server gracefully', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: `/game/${gameId}/move`,
+      url: `/connect4/game/${gameId}/move`,
       payload: { column: 3, player_id: playerId },
     });
 
@@ -102,6 +106,15 @@ describe('Game Routes Integration', () => {
       expect(body.message).toMatch(/ENOENT|Move failed/);
     }
   });
+
+  test('GET /nonsense/game/create 404s on an unknown game type', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/nonsense/game/create',
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
   describe('AI vs human player ID assignment', () => {
     test('POST /game/create assigns a real p2_id when p1 is AI and p2 is human', async () => {
       // Regression test: p2_id used to be derived from p1_id (`p2Id = p2Type ===
@@ -110,7 +123,7 @@ describe('Game Routes Integration', () => {
       // get a valid session id to make moves with.
       const response = await app.inject({
         method: 'POST',
-        url: '/game/create',
+        url: '/connect4/game/create',
         payload: {
           p1_type: 'ai',
           p2_type: 'human',
@@ -130,7 +143,7 @@ describe('Game Routes Integration', () => {
     test('POST /game/create still shares one id between two human players', async () => {
       const response = await app.inject({
         method: 'POST',
-        url: '/game/create',
+        url: '/connect4/game/create',
         payload: {
           p1_type: 'human',
           p2_type: 'human',
@@ -149,12 +162,11 @@ describe('Game Routes Integration', () => {
     let chessGameId = '';
     let chessPlayerId = '';
 
-    test('POST /game/create creates a chess game', async () => {
+    test('POST /chess/game/create creates a chess game', async () => {
       const response = await app.inject({
         method: 'POST',
-        url: '/game/create',
+        url: '/chess/game/create',
         payload: {
-          game_type: 'chess',
           p1_type: 'human',
           p2_type: 'human',
         },
@@ -166,10 +178,10 @@ describe('Game Routes Integration', () => {
       chessPlayerId = body.p1_id;
     });
 
-    test('GET /game/:id/status returns valid chess state schema', async () => {
+    test('GET /chess/game/:id/status returns valid chess state schema', async () => {
       const response = await app.inject({
         method: 'GET',
-        url: `/game/${chessGameId}/status`,
+        url: `/chess/game/${chessGameId}/status`,
       });
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
@@ -180,18 +192,50 @@ describe('Game Routes Integration', () => {
       expect(body.fen).toBeDefined();
     });
 
-    test('POST /game/:id/move accepts a valid chess action', async () => {
+    test('GET /chess/game/:id/status reflects the same p1_id/p2_id handed back at creation', async () => {
+      // Regression coverage for premove turn-identity support: the client
+      // derives "whose turn is this" by comparing its stored playerId
+      // against these two fields (see ChessView.vue's resolveMyPlayerNumber).
+      const response = await app.inject({
+        method: 'GET',
+        url: `/chess/game/${chessGameId}/status`,
+      });
+      const body = JSON.parse(response.payload);
+      // Pass-and-play (both p1/p2 human): one shared id for both seats.
+      expect(body.p1_id).toBe(chessPlayerId);
+      expect(body.p2_id).toBe(chessPlayerId);
+    });
+
+    test('human p1 vs AI p2: p1_id is a real id, p2_id is null', async () => {
+      const createRes = await app.inject({
+        method: 'POST',
+        url: '/chess/game/create',
+        payload: { p1_type: 'human', p2_type: 'ai' },
+      });
+      const { game_id } = JSON.parse(createRes.payload);
+
+      const statusRes = await app.inject({
+        method: 'GET',
+        url: `/chess/game/${game_id}/status`,
+      });
+      const body = JSON.parse(statusRes.payload);
+      expect(typeof body.p1_id).toBe('string');
+      expect(body.p1_id.length).toBeGreaterThan(0);
+      expect(body.p2_id).toBeNull();
+    });
+
+    test('POST /chess/game/:id/move accepts a valid chess action', async () => {
       // Get legal actions first to ensure we pick a valid one dynamically
       const statusRes = await app.inject({
         method: 'GET',
-        url: `/game/${chessGameId}/status`,
+        url: `/chess/game/${chessGameId}/status`,
       });
       const statusBody = JSON.parse(statusRes.payload);
       const validAction = statusBody.legal_actions[0];
 
       const response = await app.inject({
         method: 'POST',
-        url: `/game/${chessGameId}/move`,
+        url: `/chess/game/${chessGameId}/move`,
         payload: { action: validAction, player_id: chessPlayerId },
       });
       expect(response.statusCode).toBe(200);
@@ -201,10 +245,10 @@ describe('Game Routes Integration', () => {
       expect(body.board).toBeInstanceOf(Array);
     });
 
-    test('POST /game/:id/move rejects an invalid chess action out of bounds', async () => {
+    test('POST /chess/game/:id/move rejects an invalid chess action out of bounds', async () => {
       const response = await app.inject({
         method: 'POST',
-        url: `/game/${chessGameId}/move`,
+        url: `/chess/game/${chessGameId}/move`,
         payload: { action: 999999, player_id: chessPlayerId },
       });
       expect(response.statusCode).toBe(400);
@@ -212,13 +256,13 @@ describe('Game Routes Integration', () => {
       expect(body.status).toBe('error');
       expect(body.message).toBe('Invalid action');
     });
+
     test("plays a fool's mate and terminates the game", async () => {
       // Create a new game
       const createRes = await app.inject({
         method: 'POST',
-        url: '/game/create',
+        url: '/chess/game/create',
         payload: {
-          game_type: 'chess',
           p1_type: 'human',
           p2_type: 'human',
         },
@@ -250,7 +294,7 @@ describe('Game Routes Integration', () => {
       for (const action of moves) {
         const moveRes = await app.inject({
           method: 'POST',
-          url: `/game/${gameId}/move`,
+          url: `/chess/game/${gameId}/move`,
           payload: { action, player_id: playerId },
         });
         expect(moveRes.statusCode).toBe(200);
@@ -258,7 +302,7 @@ describe('Game Routes Integration', () => {
 
       const statusRes = await app.inject({
         method: 'GET',
-        url: `/game/${gameId}/status`,
+        url: `/chess/game/${gameId}/status`,
       });
       expect(statusRes.statusCode).toBe(200);
       const body = JSON.parse(statusRes.payload);

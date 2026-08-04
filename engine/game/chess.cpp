@@ -920,24 +920,41 @@ void Chess::move_piece(int r1, int c1, int r2, int c2, int promoted_piece) {
 }
 
 bool Chess::can_castle(int side) const {
+    // The king may not pass through an attacked square, not just avoid landing
+    // on one - that landing-square (and "currently in check") case is already
+    // covered elsewhere (the post-move is_attacked filter in actions(), and
+    // the !check_status() guard in move_rules_k/K respectively), so this only
+    // needs to check the transit square the king crosses mid-castle.
     if (player == 0 && K_move_count == 0) {
         if (side == 0 && R1_move_count == 0 && current_board[7][1] == EMPTY &&
             current_board[7][2] == EMPTY && current_board[7][3] == EMPTY) {
-            return true;
+            auto copy = current_board;
+            copy[7][4] = EMPTY;
+            copy[7][3] = W_KING; // d1, transit square
+            return !bitboard::is_attacked(0, copy);
         }
         if (side == 1 && R2_move_count == 0 && current_board[7][5] == EMPTY &&
             current_board[7][6] == EMPTY) {
-            return true;
+            auto copy = current_board;
+            copy[7][4] = EMPTY;
+            copy[7][5] = W_KING; // f1, transit square
+            return !bitboard::is_attacked(0, copy);
         }
     }
     if (player == 1 && k_move_count == 0) {
         if (side == 0 && r1_move_count == 0 && current_board[0][1] == EMPTY &&
             current_board[0][2] == EMPTY && current_board[0][3] == EMPTY) {
-            return true;
+            auto copy = current_board;
+            copy[0][4] = EMPTY;
+            copy[0][3] = B_KING; // d8, transit square
+            return !bitboard::is_attacked(1, copy);
         }
         if (side == 1 && r2_move_count == 0 && current_board[0][5] == EMPTY &&
             current_board[0][6] == EMPTY) {
-            return true;
+            auto copy = current_board;
+            copy[0][4] = EMPTY;
+            copy[0][5] = B_KING; // f8, transit square
+            return !bitboard::is_attacked(1, copy);
         }
     }
     return false;

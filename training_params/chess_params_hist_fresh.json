@@ -2,7 +2,7 @@
   "game": "chess",
   "games_in_each_iteration": 500,
   "mcts_batch_size": 16,
-  "mcts_simulations": 256,
+  "mcts_simulations": 400,
   "fast_mcts_simulations": 64,
   "full_search_probability": 0.5,
   "use_gumbel_search": true,

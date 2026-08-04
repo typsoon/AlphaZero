@@ -23,6 +23,17 @@ export class AlphaZeroAgent {
         socketPath: this.socketPath,
         path: '/predict',
         method: 'POST',
+        // Without this, node's default global agent pools/reuses sockets
+        // across requests even though each call here looks like a fresh
+        // http.request(). MCTS searches can easily leave 5-10s+ between
+        // requests (waiting on a human's move, or - as found via
+        // play_vs_engine_zoo.py - an opponent engine's own turn), long
+        // enough for inference_server's HTTP layer to close an idle pooled
+        // connection server-side; the next write on that now-dead socket
+        // then fails with EPIPE. `agent: false` opts out of pooling
+        // entirely so every request gets its own fresh connection - the
+        // overhead is negligible at this request rate.
+        agent: false as const,
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(postData),
