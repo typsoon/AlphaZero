@@ -13,14 +13,16 @@ struct InferenceServerArgs {
     // Chess only: 0 = default 19-plane ChessEncoderV1; N in {1,4,8} =
     // ChessEncoderV2History(N) for a history-encoder net.
     int chess_encoder_history{0};
-    // ChessEncoderV2History's row-flip convention: false (default) = this
-    // engine's own choice (Black flipped); true = the engine-zoo reference's
-    // own convention (White flipped). Only ever needed for a checkpoint whose
-    // weights were transplanted from engine-zoo (e.g. via
-    // convert_safetensors_v2.py) - never for a network this repo trained
-    // itself. Ignored when chess_encoder_history is 0.
+    // ChessEncoderV2History's row orientation: false (default) matches the
+    // engine-zoo reference's actual row arithmetic exactly (verified by
+    // tracing both engines' row math to concrete squares - see
+    // chess_encoder_v2history.hpp); true mirrors every position top/bottom
+    // relative to the reference. Use the default (false) for checkpoints
+    // transplanted from engine-zoo (e.g. via convert_safetensors_v2.py) as
+    // well as for a network this repo trained itself - setting true
+    // mismatches the transplanted case. Ignored when chess_encoder_history is 0.
     bool chess_encoder_flip_white{false};
-    // The remaining fields mirror training_params/*.json's self-play search
+    // The remaining fields mirror training_params/*.toml's self-play search
     // config (see AlphaZeroTrainer's self_play_and_train_loop), letting the
     // server reproduce the exact search behavior training data was generated
     // with, rather than always using the plain-PUCT search() path regardless

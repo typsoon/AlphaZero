@@ -60,7 +60,7 @@ while true; do
   attempt=$((attempt + 1))
   CONFIG=$(cat "$ACTIVE_CONFIG_FILE" 2>/dev/null)
   if [ -z "$CONFIG" ]; then
-    CONFIG="training_params/chess_params_hist_bootstrap.json"
+    CONFIG="training_params/chess_params_hist_bootstrap.toml"
   fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting attempt #$attempt with config $CONFIG" >>"$STATUS_LOG"
   python -m python --config "$CONFIG" >>"$RUN_LOG" 2>&1

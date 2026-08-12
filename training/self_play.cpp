@@ -9,8 +9,10 @@
 #include "mcts/mcts_factory.hpp"
 #include "replay_buffer.hpp"
 #include "resignation.hpp"
+#include <algorithm>
 #include <c10/core/Device.h>
 #include <c10/core/DeviceType.h>
+#include <cmath>
 #include <cuda_runtime_api.h>
 #include <memory>
 #include <omp.h>
@@ -54,7 +56,8 @@ static bool play_game(std::shared_ptr<Game> game, MCTS &mcts, ReplayBuffer &repl
                       bool use_gumbel_search, int max_num_considered_actions,
                       bool resignation_enabled, float resignation_threshold,
                       int resignation_consecutive_moves, int resignation_min_ply,
-                      float resignation_disable_probability, const StateEncoder &encoder) {
+                      float resignation_disable_probability, const StateEncoder &encoder,
+                      float temperature, int temperature_plies) {
     game->reset();
     std::vector<Transition> trajectory;
     // Ply index (0-based move number) each trajectory entry was recorded at -
@@ -129,16 +132,31 @@ static bool play_game(std::shared_ptr<Game> game, MCTS &mcts, ReplayBuffer &repl
             root_value = result.second;
         }
 
-        // Temperature scaling: tau=1 for first 30 moves, tau->0 afterwards.
-        // The tau=1 sampling phase applies to both search variants (for Gumbel
-        // it adds opening diversity on top of the Gumbel draws' own
-        // randomness, same as it does on top of Dirichlet noise for PUCT); the
-        // tau->0 phase plays the search's own best action - argmax of visit
-        // counts for PUCT, the sequential-halving winner for Gumbel.
+        // Temperature scaling: tau=`temperature` for the first
+        // `temperature_plies` moves - sampled from the search's own policy,
+        // reweighted by policy[a]^(1/tau) when tau != 1 (AlphaZero's standard
+        // softening formula; std::discrete_distribution normalizes the
+        // weights itself, so the powered vector doesn't need to sum to 1).
+        // tau<=0 falls through to the greedy branches below regardless of
+        // ply, same as the tau->0 phase past temperature_plies. The sampling
+        // phase applies to both search variants (for Gumbel it adds opening
+        // diversity on top of the Gumbel draws' own randomness, same as it
+        // does on top of Dirichlet noise for PUCT); the tau->0 phase plays
+        // the search's own best action - argmax of visit counts for PUCT,
+        // the sequential-halving winner for Gumbel.
         int action = -1;
-        if (move_idx < 30) {
-            std::discrete_distribution<int> dist(policy.begin(), policy.end());
-            action = dist(rng);
+        if (move_idx < temperature_plies && temperature > 0.0f) {
+            if (temperature != 1.0f) {
+                std::vector<float> scaled(policy.size());
+                for (size_t a = 0; a < policy.size(); a++) {
+                    scaled[a] = policy[a] > 0.0f ? std::pow(policy[a], 1.0f / temperature) : 0.0f;
+                }
+                std::discrete_distribution<int> dist(scaled.begin(), scaled.end());
+                action = dist(rng);
+            } else {
+                std::discrete_distribution<int> dist(policy.begin(), policy.end());
+                action = dist(rng);
+            }
         } else if (use_gumbel_search) {
             action = gumbel_action;
         } else {
@@ -201,7 +219,8 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
                int resignation_min_ply, float resignation_disable_probability, float fpu_reduction,
                std::shared_ptr<StateEncoder> encoder,
                std::shared_ptr<StateEncoder> self_play_encoder, std::string value_network_path,
-               std::shared_ptr<StateEncoder> value_network_encoder, float dirichlet_epsilon) {
+               std::shared_ptr<StateEncoder> value_network_encoder, float dirichlet_epsilon,
+               float temperature, int temperature_plies) {
     auto device = torch::Device(torch::cuda::is_available() ? "cuda" : "cpu");
     // std::cerr << device << '\n';
 
@@ -314,7 +333,7 @@ void self_play(std::shared_ptr<Game> initial_game, std::string network_path,
                       fast_mcts_num_simulations, full_search_probability, mcts_batch_size,
                       max_moves, use_gumbel_search, max_num_considered_actions, resignation_enabled,
                       resignation_threshold, resignation_consecutive_moves, resignation_min_ply,
-                      resignation_disable_probability, *encoder);
+                      resignation_disable_probability, *encoder, temperature, temperature_plies);
         if (resigned)
             games_resigned++;
 

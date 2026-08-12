@@ -21,7 +21,8 @@ PYBIND11_MODULE(self_play_bind, m) {
           py::arg("self_play_encoder") = std::shared_ptr<StateEncoder>(),
           py::arg("value_network_path") = std::string(""),
           py::arg("value_network_encoder") = std::shared_ptr<StateEncoder>(),
-          py::arg("dirichlet_epsilon") = 0.25f);
+          py::arg("dirichlet_epsilon") = 0.25f, py::arg("temperature") = 1.0f,
+          py::arg("temperature_plies") = 30);
 
     m.def("self_play_connect4", &self_play, py::arg("game"), py::arg("network_path"),
           py::arg("replay_buf"), py::arg("num_games") = 100, py::arg("thread_count") = 1,
@@ -36,5 +37,6 @@ PYBIND11_MODULE(self_play_bind, m) {
           py::arg("self_play_encoder") = std::shared_ptr<StateEncoder>(),
           py::arg("value_network_path") = std::string(""),
           py::arg("value_network_encoder") = std::shared_ptr<StateEncoder>(),
-          py::arg("dirichlet_epsilon") = 0.25f);
+          py::arg("dirichlet_epsilon") = 0.25f, py::arg("temperature") = 1.0f,
+          py::arg("temperature_plies") = 30);
 }

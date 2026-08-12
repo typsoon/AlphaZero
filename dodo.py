@@ -304,6 +304,7 @@ def task_build():
                     run_cmake = False
 
         import sys
+
         cmake_cmd = (
             f"cmake -S {PROJ_ROOT} -B {BUILD_DIR} "
             f"-DCMAKE_BUILD_TYPE={build_type} "
@@ -657,7 +658,7 @@ def task_run_arena():
                 "long": "params_file",
                 "type": str,
                 "default": "",
-                "help": "JSON file with any of the above keys (CLI flags win)",
+                "help": "TOML file with any of the above keys (CLI flags win)",
             },
         ],
         "task_dep": ["setup_vcpkg", "patch_torchtrt"],
@@ -699,7 +700,7 @@ def task_run_inference_server():
     from dodo_profile import _merge_params_file
 
     inference_bin = BUILD_DIR / "inference_server" / "inference_server"
-    # mcts_simulations is training_params/*.json's name for search depth;
+    # mcts_simulations is training_params/*.toml's name for search depth;
     # everything else this task cares about (mcts_batch_size,
     # chess_encoder_history, use_gumbel_search, max_num_considered_actions,
     # full_search_probability, fast_mcts_simulations) already matches its
@@ -750,7 +751,7 @@ def task_run_inference_server():
         # chess-only; only pass when a history encoder is requested.
         if game == "chess" and chess_encoder_history:
             cmd += f" --chess-encoder-history {chess_encoder_history}"
-        # The remaining flags mirror training_params/*.json's self-play search
+        # The remaining flags mirror training_params/*.toml's self-play search
         # config (mcts_simulations/mcts_batch_size above already do) - only
         # passed when they'd change the binary's own defaults, so the command
         # line stays uncluttered for the common case.
@@ -823,7 +824,7 @@ def task_run_inference_server():
                 "type": bool,
                 "default": False,
                 "help": "Use Gumbel-Top-k root sampling instead of plain-PUCT "
-                "search (matches training_params/*.json's use_gumbel_search)",
+                "search (matches training_params/*.toml's use_gumbel_search)",
             },
             {
                 "name": "max_num_considered_actions",
@@ -848,7 +849,7 @@ def task_run_inference_server():
                 "long": "fast-mcts-simulations",
                 "type": int,
                 "default": 0,
-                "help": "Simulation count for the \"fast\" branch above, only "
+                "help": 'Simulation count for the "fast" branch above, only '
                 "used when --full-search-probability < 1.0",
             },
             {
@@ -866,12 +867,12 @@ def task_run_inference_server():
                 "long": "chess-encoder-flip-white",
                 "type": bool,
                 "default": False,
-                "help": "ChessEncoderV2History only: use the engine-zoo "
-                "reference's row-flip convention (White flipped) instead of "
-                "this engine's own (Black flipped). Only for checkpoints "
-                "transplanted from engine-zoo (e.g. via "
-                "convert_safetensors_v2.py) - never for a network this repo "
-                "trained itself.",
+                "help": "ChessEncoderV2History only: mirror the board "
+                "top/bottom relative to the engine-zoo reference's actual "
+                "row orientation. Do NOT set for checkpoints transplanted "
+                "from engine-zoo (e.g. via convert_safetensors_v2.py) - the "
+                "default (False) already matches the reference; this also "
+                "applies to a network this repo trained itself.",
             },
             {
                 "name": "fpu_reduction",
@@ -889,11 +890,11 @@ def task_run_inference_server():
                 "long": "params_file",
                 "type": str,
                 "default": "",
-                "help": "JSON file with any of: mcts_simulations (-> "
+                "help": "TOML file with any of: mcts_simulations (-> "
                 "mcts_search_depth), mcts_batch_size, chess_encoder_history, "
                 "use_gumbel_search, max_num_considered_actions, "
                 "full_search_probability, fast_mcts_simulations, "
-                "dirichlet_epsilon, fpu_reduction. A full training_params/*.json "
+                "dirichlet_epsilon, fpu_reduction. A full training_params/*.toml "
                 "works directly (other keys ignored); CLI flags win over file "
                 "values.",
             },

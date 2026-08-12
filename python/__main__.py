@@ -11,7 +11,7 @@ from .network import AlphaZeroNetwork
 from .train import self_play_and_train_loop
 from .replay_persistence import compute_tag
 import argparse
-import json
+import tomllib
 import os
 import shutil
 import logging
@@ -61,7 +61,7 @@ def get_args():
         "--config",
         type=str,
         default=None,
-        help="Path to a JSON file with training arguments (keys are argument "
+        help="Path to a TOML file with training arguments (keys are argument "
         "names, e.g. 'games_in_each_iteration'). Values in the file become "
         "the new defaults for the arguments below; explicit CLI flags still "
         "take precedence over them.",
@@ -92,7 +92,16 @@ def get_args():
         default=400,
         help="Number of games in each iteration",
     )
-    parser.add_argument(
+    # --training-iterations and --max-replay-reuse-per-iteration are two
+    # different strategies for the same decision (how many training steps to
+    # run each loop iteration) - a fixed count vs. one paced to that
+    # iteration's self-play output. Grouped as mutually exclusive so passing
+    # both explicitly on the command line is a hard error instead of silently
+    # picking one (see also the JSON-config-level check in the same-name
+    # check right after config file loading below, which catches the case
+    # where both are set via --config instead of directly on argv).
+    training_steps_group = parser.add_mutually_exclusive_group()
+    training_steps_group.add_argument(
         "--training-iterations",
         type=int,
         default=2000,
@@ -341,6 +350,21 @@ def get_args():
         "the on-exit save). Raise it to cut save I/O; lower it to lose fewer "
         "games to a hard crash.",
     )
+    training_steps_group.add_argument(
+        "--max-replay-reuse-per-iteration",
+        type=float,
+        default=None,
+        help="Caps each iteration's actual training steps to "
+        "floor(fresh_samples_this_iteration * this / --minibatch-size), where "
+        "fresh_samples_this_iteration is how many new transitions that "
+        "iteration's self-play actually produced (bounded above by "
+        "--training-iterations either way). Same knob/formula as engine-zoo's "
+        "training.max_replay_reuse_per_iteration; their default of 1.0 means "
+        "each sample is drawn about once on average before FIFO eviction. "
+        "Default None disables the cap entirely, leaving --training-iterations "
+        "as a fixed per-iteration count regardless of self-play output - the "
+        "unchanged previous behavior.",
+    )
     parser.add_argument(
         "--resignation-enabled",
         action="store_true",
@@ -402,6 +426,27 @@ def get_args():
         "in Dirichlet noise)",
     )
     parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="For the first --temperature-plies moves of each self-play game, "
+        "sample the move played from the search's own policy reweighted by "
+        "policy[a]^(1/temperature) instead of always playing greedily. 1.0 "
+        "(the default, matching self_play.cpp's long-standing hardcoded "
+        "behavior) is unweighted proportional sampling; <1 sharpens toward "
+        "the top move; <=0 is always-greedy regardless of ply. Applies on "
+        "top of Dirichlet noise/Gumbel's own randomness, not instead of it.",
+    )
+    parser.add_argument(
+        "--temperature-plies",
+        type=int,
+        default=30,
+        help="Number of opening plies --temperature applies to; every move "
+        "after this is always greedy (argmax of visit counts for PUCT, the "
+        "sequential-halving winner for Gumbel). 0 disables the sampling "
+        "phase entirely, same as --temperature<=0.",
+    )
+    parser.add_argument(
         "--log-dir",
         type=str,
         default=None,
@@ -419,13 +464,89 @@ def get_args():
 
     config_args, _ = parser.parse_known_args()
     if config_args.config:
-        with open(config_args.config) as f:
-            config_values = json.load(f)
+        with open(config_args.config, "rb") as f:
+            config_values = tomllib.load(f)
+
+        # [gumbel]/[puct] TOML sections group the two algorithm-exclusive
+        # settings (max_num_considered_actions is "Gumbel search only" per
+        # --max-num-considered-actions's own help; dirichlet_epsilon is
+        # "Ignored when --use-gumbel-search is set" per --dirichlet-epsilon's).
+        # Flatten them back into the main dict for the argparse mapping below,
+        # but only after checking they're paired with the right algorithm -
+        # setting a Gumbel-only knob while Gumbel is off would otherwise be
+        # silently ignored rather than erroring, which is easy to miss.
+        gumbel_section = config_values.pop("gumbel", {})
+        puct_section = config_values.pop("puct", {})
+        use_gumbel_search_default = next(
+            a.default for a in parser._actions if a.dest == "use_gumbel_search"
+        )
+        gumbel_enabled = config_values.get(
+            "use_gumbel_search", use_gumbel_search_default
+        )
+        if gumbel_section and not gumbel_enabled:
+            raise ValueError(
+                f"Config file '{config_args.config}' sets [gumbel] key(s) "
+                f"{sorted(gumbel_section)} but use_gumbel_search is not "
+                "true - Gumbel-only settings require use_gumbel_search=true."
+            )
+        if puct_section and gumbel_enabled:
+            raise ValueError(
+                f"Config file '{config_args.config}' sets [puct] key(s) "
+                f"{sorted(puct_section)} but use_gumbel_search is true - "
+                "plain-PUCT-only settings require use_gumbel_search=false "
+                "(or unset)."
+            )
+        config_values.update(gumbel_section)
+        config_values.update(puct_section)
+
+        # [resignation] groups the 4 settings that only matter when
+        # --resignation-enabled is set (see each of their own help text -
+        # e.g. --resignation-threshold: "Side-to-move root value below which
+        # a turn counts toward the resignation streak", meaningless if
+        # resignation never triggers). Same rationale as [gumbel]/[puct]
+        # above: catch a config that sets these while resignation is off
+        # instead of silently ignoring them.
+        resignation_section = config_values.pop("resignation", {})
+        resignation_enabled_default = next(
+            a.default for a in parser._actions if a.dest == "resignation_enabled"
+        )
+        resignation_enabled = config_values.get(
+            "resignation_enabled", resignation_enabled_default
+        )
+        if resignation_section and not resignation_enabled:
+            raise ValueError(
+                f"Config file '{config_args.config}' sets [resignation] key(s) "
+                f"{sorted(resignation_section)} but resignation_enabled is not "
+                "true - these settings require resignation_enabled=true."
+            )
+        config_values.update(resignation_section)
+
+        # [checkpointing]/[replay_buffer]/[temperature] are pure organizational
+        # groupings - unlike [gumbel]/[puct]/[resignation] above, none of the
+        # three is gated behind a single boolean (checkpoint settings are
+        # always relevant; an unset replay_buffer_path is itself the
+        # "persistence off" state rather than a separate flag; temperature
+        # applies to both search algorithms unconditionally per its own help
+        # text), so just flatten them back in with no extra check.
+        config_values.update(config_values.pop("checkpointing", {}))
+        config_values.update(config_values.pop("replay_buffer", {}))
+        config_values.update(config_values.pop("temperature", {}))
+
         known_dests = {action.dest for action in parser._actions}
         unknown_keys = sorted(set(config_values) - known_dests)
         if unknown_keys:
             raise ValueError(
                 f"Unknown key(s) in config file '{config_args.config}': {unknown_keys}"
+            )
+        if "training_iterations" in config_values and (
+            "max_replay_reuse_per_iteration" in config_values
+        ):
+            raise ValueError(
+                f"Config file '{config_args.config}' sets both "
+                "'training_iterations' and 'max_replay_reuse_per_iteration' - "
+                "these are incompatible (the latter paces training steps to "
+                "self-play throughput instead of a fixed count, so a fixed "
+                "count alongside it is ambiguous). Set only one."
             )
         parser.set_defaults(**config_values)
         logging.info(
@@ -594,6 +715,8 @@ if __name__ == "__main__":
         resignation_disable_probability=args.resignation_disable_probability,
         fpu_reduction=args.fpu_reduction,
         dirichlet_epsilon=args.dirichlet_epsilon,
+        temperature=args.temperature,
+        temperature_plies=args.temperature_plies,
         self_play_network_path=args.self_play_network,
         self_play_value_network_path=args.self_play_value_network,
         encoder=encoder,
@@ -601,6 +724,7 @@ if __name__ == "__main__":
         self_play_value_encoder=self_play_value_encoder,
         replay_buffer_path=args.replay_buffer_path,
         replay_buffer_save_every=args.replay_buffer_save_every,
+        max_replay_reuse_per_iteration=args.max_replay_reuse_per_iteration,
         replay_buffer_tag=replay_buffer_tag,
         replay_buffer_state_shape=replay_buffer_state_shape,
         log_dir=log_dir,

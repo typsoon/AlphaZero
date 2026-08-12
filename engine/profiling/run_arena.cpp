@@ -60,11 +60,32 @@ int main(int argc, char *argv[]) {
                   << " <game> <network_path_a> <network_path_b> [num_games] [thread_count] "
                      "[max_moves] [mcts_num_simulations] [mcts_batch_size] "
                      "[use_gumbel_search] [max_num_considered_actions] "
-                     "[transposition_cache_entries] [encoder_history_a] [encoder_history_b]\n"
+                     "[transposition_cache_entries] [encoder_history_a] [encoder_history_b] "
+                     "[wait_for_count] [timeout_ms]\n"
                   << "  encoder_history_{a,b}: chess only - 0 (default) = 19-plane "
                      "ChessEncoderV1; 1/4/8 = ChessEncoderV2History(N). Set per network to "
                      "match what each checkpoint was trained on (e.g. a history-encoder "
                      "trainee vs the legacy 1432: encoder_history_a=4 encoder_history_b=0).\n"
+                  << "  wait_for_count: DynamicBatcher's cross-thread batch-trigger threshold "
+                     "(omit, or pass -1, for mcts_batch_size, the historical default - 0 is a "
+                     "real, distinct value here, not a sentinel: it means the worker never waits "
+                     "for a second submission, dispatching each one alone). Since a single "
+                     "thread's own MCTS batch round already submits mcts_batch_size states in "
+                     "one call, leaving this at mcts_batch_size lets that one submission satisfy "
+                     "the threshold by itself - the worker fires before other threads' concurrent "
+                     "games contribute to the same GPU forward pass, so games effectively never "
+                     "batch together. Set higher (e.g. thread_count * mcts_batch_size) to force "
+                     "real cross-game batching; timeout_ms still bounds worst-case latency as "
+                     "games finish and fewer threads are active.\n"
+                  << "  timeout_ms: how long the worker waits for current_count to reach "
+                     "wait_for_count before dispatching whatever's pending anyway (omit, or pass "
+                     "-1, for 2ms, the historical default - 0 is a real, distinct value: dispatch "
+                     "immediately without waiting, same effect as wait_for_count=0 regardless of "
+                     "wait_for_count's own setting). Larger values let more concurrent "
+                     "submissions accumulate before a raised wait_for_count's threshold is met, "
+                     "at the cost of added per-batch latency when the GPU would otherwise sit "
+                     "idle waiting for a batch that never fills (e.g. near the end of a match, "
+                     "when fewer games are still in flight).\n"
                   << "  Plays network A vs network B, alternating colors each game, and prints "
                      "the match score plus an Elo-difference estimate (positive = A stronger).\n";
         return 1;
@@ -83,6 +104,8 @@ int main(int argc, char *argv[]) {
     size_t transposition_cache_entries = (argc >= 12) ? std::stoull(argv[11]) : 1000000;
     int encoder_history_a = (argc >= 13) ? std::stoi(argv[12]) : 0;
     int encoder_history_b = (argc >= 14) ? std::stoi(argv[13]) : 0;
+    int wait_for_count_arg = (argc >= 15) ? std::stoi(argv[14]) : -1;
+    int timeout_ms_arg = (argc >= 16) ? std::stoi(argv[15]) : -1;
 
     std::shared_ptr<Game> initial_game;
     if (game_name == "connect4") {
@@ -106,8 +129,15 @@ int main(int argc, char *argv[]) {
     // per checkpoint, exactly like self_play() shares one across its threads -
     // each engine's evaluations batch across all games in flight. The caches
     // are per-factory, so results can never leak between the two networks.
-    int wait_for_count = mcts_batch_size;
-    int timeout_ms = 2;
+    // wait_for_count_arg == -1 (omitted) preserves the historical default
+    // (mcts_batch_size); 0 is a real, distinct value (see usage string above),
+    // so only negative values fall back to the default.
+    int wait_for_count = (wait_for_count_arg >= 0) ? wait_for_count_arg : mcts_batch_size;
+    // timeout_ms_arg == -1 (omitted) preserves the historical default (2ms);
+    // 0 is a real, distinct value (see usage string above), so only negative
+    // values fall back to the default.
+    int timeout_ms = (timeout_ms_arg >= 0) ? timeout_ms_arg : 2;
+    spdlog::info("  wait_for_count={} timeout_ms={}", wait_for_count, timeout_ms);
     // Each network is fed the encoding it was trained on. 0 => leave null so the
     // factory derives the game default (ChessEncoderV1); N in {1,4,8} =>
     // ChessEncoderV2History(N). This lets a 63-plane history-encoder net play a

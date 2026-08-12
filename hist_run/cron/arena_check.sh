@@ -20,20 +20,46 @@ JSONL="$REPO/hist_run/cron/arena_log.jsonl"
 # each checkpoint's .pt weights via network.py's backend="onnx" path (see
 # [[native-tensorrt-engine-loading]]) - loads and runs fine through
 # basic_infer.cpp's TensorRTInferenceBackend.
+# early_0714_0936, seed_0400, and rollback_2316 were removed 2026-08-05 09:11
+# - all three had saturated at ~98-100% win rate for the live net over the
+# preceding ~24h (early_0714_0936: min 95.8%/mean 99.8% across 19 readings;
+# seed_0400: min 95.8%/mean 98.6%; rollback_2316: min 91.7%/mean 97.9%),
+# i.e. no longer discriminating - every round just re-confirmed what was
+# already known. mid_0716 and champ_1432 were KEPT despite occasionally also
+# hitting 100%, since they still show real variance down to 70-79% and so
+# still carry signal. Replaced with a fresh anchor_0911 snapshot (below) so
+# the arena keeps a moving "how far since now" reference instead of shrinking
+# to fewer live comparisons.
 OPPONENTS=(
-    "early_0714_0936:$OLD_DIR/chess_AZNetwork_20260714_0936.pt_trt:0"
-    "mid_0716:$OLD_DIR/chess_AZNetwork_20260716_0716.pt_trt:0"
-    "champ_1432:$OLD_DIR/chess_AZNetwork_20260718_1432.pt_trt:0"
-    # The 04:00 net the current run was restarted from (2026-07-27) - a fixed
-    # progress anchor: >50% means training has improved over its own start
-    # point. Same architecture/encoder as side A (enc 4), .pt_scripted so no
-    # double-TRT-context crash.
-    "seed_0400:$OLD_DIR/chess_AZNetwork_hist_20260725_040000.pt_scripted:4"
-    # A friend's mature v1 net (Engine-Zoo ckpt_1300, converted 2026-07-28) - a
-    # fixed external reference. 19-plane v1, so encoder 0; .pt_scripted so no
-    # double-TRT-context crash against side A. Baseline: mateusz went 15% vs
-    # champ_1432 and ~even (55%) vs the current net at conversion time.
-    "mateusz:$REPO/mateusz_champions/best_v1/mateusz_champion.pt_scripted:0"
+    # mid_0716 removed 2026-08-06 10:53, replaced by anchor_1053 below - see
+    # that entry's comment for why. champ_1432 itself removed 2026-08-11 -
+    # saturated (91-100% for days), no longer discriminating.
+    # A fixed snapshot of the live hist net itself from 2026-08-06 10:53,
+    # replacing mid_0716 above - taken right at the temperature=1.4 cutover
+    # (training_params/chess_params_hist_fresh_puct.toml), after ~1h33m of
+    # an unplanned interim run at mcts_simulations=800/use_gumbel_search=false
+    # with no temperature yet (see project memory for the full story: a
+    # restart landed on this config by accident before the PUCT variant was
+    # fully tuned). Same architecture/encoder as side A (enc 4).
+    "anchor_1053:$OLD_DIR/chess_AZNetwork_hist_20260806_105337.pt_scripted:4"
+    # A fixed snapshot from 2026-08-06 08:00 - the last archive_net.sh
+    # snapshot taken BEFORE the accidental switch to PUCT (09:15 the same
+    # day), i.e. still purely Gumbel-search-based with the originally
+    # intended chess_params_hist_fresh settings. Fixed "how does everything
+    # since starting PUCT experiments compare to where the Gumbel run left
+    # off" reference. Same architecture/encoder as side A (enc 4).
+    "pre_puct:$OLD_DIR/chess_AZNetwork_hist_20260806_080000.pt_scripted:4"
+    # A fixed snapshot of the live hist net itself from 2026-08-05 09:11 (the
+    # value_loss_weight 0.25->1.0 cutover point - see
+    # training_params/chess_params_hist_fresh.json), replacing the three
+    # saturated fixed anchors removed above. Same architecture/encoder as
+    # side A (enc 4), .pt_scripted so no double-TRT-context crash.
+    "anchor_0911:$OLD_DIR/chess_AZNetwork_hist_20260805_091142.pt_scripted:4"
+    # A fixed snapshot of the live hist net itself from 2026-08-05 00:00 (the
+    # max_replay_reuse_per_iteration=1.0 cutover point), kept alongside
+    # anchor_0911 above as a second fixed "since when" reference at a
+    # different point in time. Same architecture/encoder as side A (enc 4).
+    "anchor_0805:$OLD_DIR/chess_AZNetwork_hist_20260805_000000.pt_scripted:4"
     # Same friend's chess-v2 net, now on generation-000157 (superseded
     # generation-000100/best_v2.pt_trt on 2026-08-04 - a newer, notably
     # stronger checkpoint from the same friend run). Same architecture/encoder
@@ -41,16 +67,30 @@ OPPONENTS=(
     # Converted via python.tools.convert_safetensors_v2 (see
     # [[native-tensorrt-engine-loading]]). No .pt_trt yet (TensorRT compile
     # hit GPU OOM from a concurrent job at conversion time) - .pt_scripted
-    # works fine and also avoids the double-TRT-context crash. Baseline: a
-    # 24-game/200-sim arena run on 2026-08-04 scored the live hist net at
-    # 33.3% (Elo -120) against this checkpoint - notably stronger than the
-    # old generation-000100 baseline it replaces.
+    # works fine and also avoids the double-TRT-context crash. This has been
+    # the one persistently negative fixed anchor since the swap (score
+    # 12.5-37.5%, Elo -89 to -338 across every reading 2026-08-04 23:00
+    # onward) - the live net has not caught up to it despite dominating
+    # every other fixed anchor.
     "mateusz_v2:$REPO/mateusz_champions/best_v2/generation-000157.pt_scripted:4"
-    # The pre-collapse peak the run was rolled back to (2026-07-29): a fixed
-    # "did it climb past where we restarted?" anchor. >50% means the current net
-    # has surpassed the rollback point. Same arch/encoder as side A (enc 4),
-    # .pt_scripted so no double-TRT-context crash.
-    "rollback_2316:$OLD_DIR/chess_AZNetwork_hist_20260728_231632.pt_scripted:4"
+    # Originally added 2026-08-11 as a fixed snapshot standing in for the
+    # live net at the moment it recorded the only >50% score ever against
+    # the current mateusz_v2 (gen-000157): 58.3%/+58 Elo at 2026-08-10
+    # 01:13:48 - see [[update-mateusz-arena-anchor]] skill for the general
+    # procedure this entry now follows. Label kept as mateusz_beat_0810
+    # across updates (not re-dated per swap) so its arena_log.jsonl history
+    # stays one continuous series. Swap history:
+    #   2026-08-11 (1st): 2026-08-10 02:00 archive (nearest of the two
+    #     bracketing 2h snapshots to the original 01:13:48 moment, which
+    #     wasn't itself archived) - 43.8%/-44 Elo vs mateusz_v2.
+    #   2026-08-11 (2nd): 2026-08-10 16:00 archive, found via an A/B search
+    #     across the 5 "best" archives + other fixed anchors - 45.8%/-29 Elo
+    #     (live net's own 64.6% excluded - not a stable checkpoint).
+    #   2026-08-11 (3rd, current): 2026-08-11 10:00 archive - a freshly
+    #     appeared snapshot beat the 16:00 one decisively (58.3%/+58 Elo vs
+    #     37.5%/-89 in a direct A/B, a 20.8pt/147 Elo gap well outside the
+    #     ~15-20pt noise floor of a single 24-game match).
+    "mateusz_beat_0810:$OLD_DIR/chess_AZNetwork_hist_20260811_100001.pt_scripted:4"
 )
 
 # Self-progression opponents: our own archived history-net snapshots from the

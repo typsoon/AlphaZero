@@ -14,7 +14,7 @@
 
 namespace {
 
-// Runs one MCTS search reproducing training_params/*.json's self-play search
+// Runs one MCTS search reproducing training_params/*.toml's self-play search
 // config: a full_search_probability-weighted coin flip between the full
 // mcts_search_depth and fast_mcts_simulations, then either plain-PUCT
 // search() or Gumbel-Top-k search_gumbel() depending on use_gumbel_search.

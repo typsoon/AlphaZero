@@ -59,6 +59,17 @@
 // self-play value and MCTS's own default, so existing callers are
 // unaffected. Ignored when use_gumbel_search is set (search_gumbel() never
 // mixes in Dirichlet noise - Gumbel-Top-k IS its root exploration).
+// temperature/temperature_plies: for the first temperature_plies moves (0
+// = never), the move played is sampled from the search's own policy
+// reweighted by policy[a]^(1/temperature) - AlphaZero's standard softening
+// (temperature=1 is unweighted proportional sampling, temperature<1
+// sharpens toward the top move, temperature<=0 is treated as always-greedy
+// regardless of ply). After temperature_plies, play is always greedy -
+// argmax of visit counts for PUCT, the sequential-halving winner for
+// Gumbel. Defaults (1.0, 30) match this function's long-standing hardcoded
+// behavior exactly, so existing callers are unaffected. This phase applies
+// on top of Dirichlet noise/Gumbel's own randomness, not instead of it -
+// see dirichlet_epsilon/use_gumbel_search above.
 void self_play(std::shared_ptr<Game> game, std::string network_path, ReplayBuffer &replay_buf,
                int num_games = 100, int thread_count = std::thread::hardware_concurrency(),
                int mcts_num_simulations = 800, int mcts_batch_size = 32, int max_moves = 512,
@@ -71,7 +82,8 @@ void self_play(std::shared_ptr<Game> game, std::string network_path, ReplayBuffe
                std::shared_ptr<StateEncoder> self_play_encoder = nullptr,
                std::string value_network_path = "",
                std::shared_ptr<StateEncoder> value_network_encoder = nullptr,
-               float dirichlet_epsilon = 0.25f);
+               float dirichlet_epsilon = 0.25f, float temperature = 1.0f,
+               int temperature_plies = 30);
 
 // Assuming Game, MCTS, ReplayBuffer, InfererFactory, MCTSFactory are defined
 // somewhere And you have torch or your own tensor type if needed

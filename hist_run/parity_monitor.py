@@ -33,7 +33,7 @@ CHAMP_1432 = (
     ROOT / "checkpoints/chess/old_checkpoint/chess_AZNetwork_20260718_1432.pt_trt"
 )
 ACTIVE_CONFIG = RUNDIR / "active_config"
-PHASE_B_CONFIG = "training_params/chess_params_hist_normal.json"
+PHASE_B_CONFIG = "training_params/chess_params_hist_normal.toml"
 PHASE_FLAG = RUNDIR / "phase"  # "A" or "B"
 PARITY_LOG = RUNDIR / "parity_log.jsonl"
 STATUS_LOG = RUNDIR / "train_status.log"
@@ -135,7 +135,7 @@ def switch_to_phase_b(reason):
             "pkill",
             "-TERM",
             "-f",
-            "python -m python --config training_params/chess_params_hist_bootstrap.json",
+            "python -m python --config training_params/chess_params_hist_bootstrap.toml",
         ],
         capture_output=True,
     )

@@ -27,6 +27,14 @@ struct Transition {
 class ReplayBuffer {
     std::vector<Transition> buffer;
     size_t ptr = 0, size = 0;
+    // Lifetime count of transitions ever passed to add(), unlike `size` (which
+    // is the current fill level and saturates at capacity once the ring
+    // buffer wraps). Callers that need "how many NEW samples were produced
+    // since point X" - e.g. pacing training steps to self-play throughput -
+    // can't use get_size() for that once the buffer is full (it stays flat
+    // regardless of turnover), so this counter exists specifically to make
+    // that delta computable via get_total_added() before/after.
+    size_t total_added = 0;
     size_t capacity;
     int64_t action_size;
     mutable std::shared_mutex rw_mutex;
@@ -93,6 +101,10 @@ class ReplayBuffer {
     void add(const std::vector<Transition> &transitions);
 
     size_t get_size() const;
+
+    // Lifetime count of transitions ever added, regardless of how many have
+    // since been evicted by ring-buffer wraparound - see `total_added` above.
+    size_t get_total_added() const;
 
     // Persist the buffer's live transitions to `path` as a torch archive so a
     // later run can reload them instead of refilling from empty self-play (the

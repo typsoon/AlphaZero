@@ -57,12 +57,18 @@ void ReplayBuffer::add(const std::vector<Transition> &transitions) { // NOLINT
         if (size < capacity) {
             size++;
         }
+        total_added++;
     }
 }
 
 size_t ReplayBuffer::get_size() const {
     std::shared_lock<std::shared_mutex> lock(rw_mutex);
     return size;
+}
+
+size_t ReplayBuffer::get_total_added() const {
+    std::shared_lock<std::shared_mutex> lock(rw_mutex);
+    return total_added;
 }
 
 void ReplayBuffer::save(const std::string &path) const {

@@ -228,6 +228,15 @@ export function deleteGame(id: string) {
   stmt.run(id);
 }
 
+/** Checkpoints the WAL back into the main db file and releases the file
+ * lock cleanly. better-sqlite3 is synchronous (every call above already
+ * completes before returning), so this isn't needed to avoid losing an
+ * in-flight write - it's just proper hygiene on shutdown instead of
+ * abandoning the WAL/SHM files for SQLite to reconcile on next open. */
+export function closeDb(): void {
+  db.close();
+}
+
 export function getGames() {
   const stmt = db.prepare(
     'SELECT id, p1_type, p1_agent, p2_type, p2_agent, game_type, finished FROM games',

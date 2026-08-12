@@ -12,7 +12,7 @@ from python.utils import (
 OUT_DIR = PROJ_ROOT / "out"
 _MKDIR_OUT_DIR = f"mkdir -p {OUT_DIR}"
 
-# Maps JSON training-param field names that differ from doit param names.
+# Maps TOML training-param field names that differ from doit param names.
 _JSON_FIELD_MAP = {
     "mcts_simulations": "mcts_num_simulations",
     "fast_mcts_simulations": "fast_mcts_num_simulations",
@@ -22,11 +22,11 @@ _JSON_FIELD_MAP = {
 
 
 def _merge_params_file(params_file: str, params: dict, field_map: dict = None) -> dict:
-    """Load a training-params JSON and merge it into *params*, returning a new dict.
+    """Load a training-params TOML file and merge it into *params*, returning a new dict.
 
     CLI flags always win over the file; the file only fills in values that were
     not explicitly overridden on the command line (i.e. still at their doit default).
-    Unknown JSON keys are silently ignored so the full training JSON can be passed
+    Unknown TOML keys are silently ignored so the full training config can be passed
     without needing to strip training-only fields first.
 
     *field_map* overrides the default _JSON_FIELD_MAP for callers whose doit param
@@ -34,15 +34,63 @@ def _merge_params_file(params_file: str, params: dict, field_map: dict = None) -
     """
     if not params_file:
         return params
-    import json
+    import tomllib
 
-    with open(params_file) as f:
-        data = json.load(f)
+    with open(params_file, "rb") as f:
+        data = tomllib.load(f)
 
     if field_map is None:
         field_map = _JSON_FIELD_MAP
 
     merged = dict(params)
+
+    # [gumbel]/[puct] TOML sections group the two algorithm-exclusive settings
+    # (max_num_considered_actions is Gumbel-only, dirichlet_epsilon is
+    # plain-PUCT-only - see python/__main__.py's matching CLI help text).
+    # Flatten them back into `data` for the merge loop below, but only after
+    # checking they're paired with the right algorithm - setting a
+    # Gumbel-only knob while Gumbel is off would otherwise be silently
+    # ignored rather than erroring, which is easy to miss.
+    gumbel_section = data.pop("gumbel", {})
+    puct_section = data.pop("puct", {})
+    use_gumbel_dest = field_map.get("use_gumbel_search", "use_gumbel_search")
+    gumbel_enabled = data.get("use_gumbel_search", merged.get(use_gumbel_dest, False))
+    if gumbel_section and not gumbel_enabled:
+        raise ValueError(
+            f"Config file '{params_file}' sets [gumbel] key(s) "
+            f"{sorted(gumbel_section)} but use_gumbel_search is not true - "
+            "Gumbel-only settings require use_gumbel_search=true."
+        )
+    if puct_section and gumbel_enabled:
+        raise ValueError(
+            f"Config file '{params_file}' sets [puct] key(s) "
+            f"{sorted(puct_section)} but use_gumbel_search is true - "
+            "plain-PUCT-only settings require use_gumbel_search=false (or unset)."
+        )
+    data.update(gumbel_section)
+    data.update(puct_section)
+
+    # [resignation] groups the 4 settings that only matter when
+    # resignation_enabled is set - same rationale as [gumbel]/[puct] above.
+    resignation_section = data.pop("resignation", {})
+    resignation_dest = field_map.get("resignation_enabled", "resignation_enabled")
+    resignation_enabled = data.get(
+        "resignation_enabled", merged.get(resignation_dest, False)
+    )
+    if resignation_section and not resignation_enabled:
+        raise ValueError(
+            f"Config file '{params_file}' sets [resignation] key(s) "
+            f"{sorted(resignation_section)} but resignation_enabled is not "
+            "true - these settings require resignation_enabled=true."
+        )
+    data.update(resignation_section)
+
+    # [checkpointing]/[replay_buffer] are pure organizational groupings, no
+    # boolean gate to validate against - see python/__main__.py's matching
+    # comment.
+    data.update(data.pop("checkpointing", {}))
+    data.update(data.pop("replay_buffer", {}))
+
     for key, value in data.items():
         param_name = field_map.get(key, key)
         if param_name in merged:
@@ -147,7 +195,7 @@ def _get_profile_params(default_num_games: int, default_thread_count: int) -> li
             "long": "params_file",
             "type": str,
             "default": "",
-            "help": "Path to a training-params JSON (e.g. training_params/chess_params_gumbell.json). "
+            "help": "Path to a training-params TOML file (e.g. training_params/chess_params_gumbell.toml). "
             "Values from the file are used as defaults; explicit CLI flags still override them.",
         },
         {

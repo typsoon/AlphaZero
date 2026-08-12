@@ -14,7 +14,7 @@ class ModelWrapper {
 };
 
 // use_gumbel_search/max_num_considered_actions/full_search_probability/
-// fast_mcts_simulations mirror training_params/*.json's self-play search
+// fast_mcts_simulations mirror training_params/*.toml's self-play search
 // config (see InferenceServerArgs) - defaults reproduce this function's
 // original behavior (plain PUCT, always the full mcts_search_depth).
 std::shared_ptr<ModelWrapper> create_connect4_model_wrapper(

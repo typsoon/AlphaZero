@@ -1,0 +1,13 @@
+game = "chess"
+network_path_a = ""
+network_path_b = ""
+num_games = 40
+thread_count = 8
+max_moves = 512
+mcts_num_simulations = 800
+mcts_batch_size = 64
+use_gumbel_search = 1
+transposition_cache_entries = 1000000
+
+[gumbel]
+max_num_considered_actions = 16

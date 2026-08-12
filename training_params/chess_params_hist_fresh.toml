@@ -1,0 +1,36 @@
+game = "chess"
+games_in_each_iteration = 500
+mcts_batch_size = 16
+mcts_simulations = 512
+fast_mcts_simulations = 256
+full_search_probability = 0.5
+use_gumbel_search = true
+batch_size = 256
+minibatch_size = 4096
+max_replay_reuse_per_iteration = 1.0
+value_loss_weight = 0.25
+loop_iterations = 100000
+max_moves = 512
+thread_count = 50
+transposition_cache_entries = 1000000
+resignation_enabled = false
+fpu_reduction = 0.1
+initial_lr = 5e-05
+lr_lower_bound = 5e-05
+log_dir = "runs/chess_hist"
+network_arch = "chess_v2"
+chess_encoder_history = 4
+
+[gumbel]
+max_num_considered_actions = 16
+
+[checkpointing]
+initial_network = "checkpoints_hist/chess/chess_AZNetwork_hist_0.pt"
+checkpoint_dir = "checkpoints_hist"
+checkpoint_stem = "AZNetwork_hist"
+tensorrt_every = 1
+
+[replay_buffer]
+replay_buffer_size = 500000
+replay_buffer_path = "/mnt/storage/users/z1201659/replay_buffer_hist.pt"
+replay_buffer_save_every = 20

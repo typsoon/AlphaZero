@@ -1,0 +1,5 @@
+game = "chess"
+mcts_batch_size = 32
+mcts_simulations = 800
+full_search_probability = 1
+chess_encoder_history = 4

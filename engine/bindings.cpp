@@ -56,6 +56,7 @@ PYBIND11_MODULE(engine_bind, m) {
                  py::arg("max_cache_entries") = 4096)
             .def("add", &ReplayBuffer::add)
             .def("get_size", &ReplayBuffer::get_size)
+            .def("get_total_added", &ReplayBuffer::get_total_added)
             .def("save", &ReplayBuffer::save, py::arg("path"),
                  py::call_guard<py::gil_scoped_release>())
             .def("load", &ReplayBuffer::load, py::arg("path"),

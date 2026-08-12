@@ -283,6 +283,15 @@ def self_play_and_train_loop(
     resignation_disable_probability: float = 0.1,
     fpu_reduction: float = 0.0,
     dirichlet_epsilon: float = 0.25,
+    # For the first temperature_plies moves of each self-play game, the move
+    # played is sampled from the search's own policy reweighted by
+    # policy[a]^(1/temperature) instead of always greedy (temperature=1 is
+    # unweighted proportional sampling, <1 sharpens toward the top move,
+    # <=0 is always-greedy regardless of ply). Applies on top of Dirichlet
+    # noise/Gumbel's own randomness, not instead of it. Defaults (1.0, 30)
+    # match self_play.cpp's long-standing hardcoded behavior exactly.
+    temperature: float = 1.0,
+    temperature_plies: int = 30,
     self_play_network_path: Optional[str] = None,
     self_play_value_network_path: Optional[str] = None,
     # The input encoding self-play feeds into inference and records into
@@ -309,6 +318,20 @@ def self_play_and_train_loop(
     replay_buffer_state_shape: Optional[list] = None,
     log_dir: Optional[str] = None,
     log_interval: int = 50,
+    # Optional pacing cap, off by default (None preserves the previous fixed-
+    # training_iterations behavior exactly). When set, caps this iteration's
+    # actual training steps to floor(fresh_samples * max_replay_reuse_per_iteration
+    # / minibatch_size), so a small self-play round can't be fitted many times
+    # over before the next round produces fresh data - same knob and formula as
+    # engine-zoo's training.max_replay_reuse_per_iteration (see
+    # crates/alphazero/src/trainer.rs's train_steps_for_fresh_replay_samples
+    # and docs/training.md in that repo). 1.0 there is their default ("reuse
+    # factor 1"); this repo's own training_iterations=35 config corresponds to
+    # an *implicit* reuse of roughly training_iterations*minibatch_size /
+    # fresh_samples_per_iteration (~7x at this run's current settings) when
+    # this stays unset. Still bounded above by training_iterations either way,
+    # so setting a very large value here just recovers the old fixed behavior.
+    max_replay_reuse_per_iteration: Optional[float] = None,
 ):
     game_type, self_play_method = game_data
     game = game_type()
@@ -374,6 +397,7 @@ def self_play_and_train_loop(
 
     try:
         for iteration in range(loop_iterations):
+            total_added_before = replay_buffer.get_total_added()
             self_play_method(
                 game=game,
                 network_path=(
@@ -399,15 +423,44 @@ def self_play_and_train_loop(
                 resignation_disable_probability=resignation_disable_probability,
                 fpu_reduction=fpu_reduction,
                 dirichlet_epsilon=dirichlet_epsilon,
+                temperature=temperature,
+                temperature_plies=temperature_plies,
                 encoder=encoder,
                 self_play_encoder=self_play_encoder,
                 value_network_path=self_play_value_network_path or "",
                 value_network_encoder=self_play_value_encoder,
             )
 
+            fresh_samples = replay_buffer.get_total_added() - total_added_before
+
             if writer is not None:
                 writer.add_scalar(
                     "self_play/replay_buffer_size", replay_buffer.get_size(), iteration
+                )
+                writer.add_scalar("self_play/fresh_samples", fresh_samples, iteration)
+
+            # Pace training steps to this iteration's actual self-play output
+            # instead of always running the fixed `training_iterations` - see
+            # max_replay_reuse_per_iteration's docstring above. Off by default.
+            if max_replay_reuse_per_iteration is not None:
+                effective_training_iterations = min(
+                    training_iterations,
+                    int(fresh_samples * max_replay_reuse_per_iteration)
+                    // minibatch_size,
+                )
+                logging.info(
+                    f"Replay-reuse cap: {fresh_samples} fresh samples this "
+                    f"iteration -> {effective_training_iterations} training "
+                    f"steps (cap {training_iterations})"
+                )
+            else:
+                effective_training_iterations = training_iterations
+
+            if writer is not None:
+                writer.add_scalar(
+                    "train/effective_training_iterations",
+                    effective_training_iterations,
+                    iteration,
                 )
 
             # Win/draw/loss mix of the training data, logged after every
@@ -442,7 +495,7 @@ def self_play_and_train_loop(
 
             global_step = trainer.train(
                 batch_size,
-                training_iterations,
+                effective_training_iterations,
                 writer=writer,
                 global_step=global_step,
                 log_interval=log_interval,

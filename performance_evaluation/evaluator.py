@@ -108,10 +108,13 @@ def main():
     parser.add_argument(
         "--chess-encoder-flip-white",
         action="store_true",
-        help="ChessEncoderV2History only: use the engine-zoo reference's "
-        "row-flip convention (White flipped) instead of this engine's own "
-        "(Black flipped). Set for checkpoints transplanted from engine-zoo "
-        "(e.g. via convert_safetensors_v2.py).",
+        help="ChessEncoderV2History only: mirror the board top/bottom "
+        "relative to the engine-zoo reference's actual row orientation "
+        "(verified by tracing both engines' row arithmetic - see "
+        "chess_encoder_v2history.hpp). Do NOT set this for checkpoints "
+        "transplanted from engine-zoo (e.g. via convert_safetensors_v2.py) - "
+        "the default (unset) already matches the reference exactly; setting "
+        "this flag mismatches it.",
     )
     parser.add_argument(
         "-v",

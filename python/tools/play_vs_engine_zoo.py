@@ -27,7 +27,7 @@ Usage:
 
   # 1. Start your own engine (from the repo root):
   doit run_inference_server --network_path <checkpoint> \\
-      --params_file inference_params/inference_params.json
+      --params_file inference_params/inference_params.toml
 
   # 2. Build the UCI wrapper for AlphaZeroDev's side (once):
   cd gameplay_server && npm run build
