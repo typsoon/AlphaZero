@@ -1,10 +1,47 @@
-# CUDA wheels: install with --index-url https://download.pytorch.org/whl/cu126
-torch==2.7.1; python_version < "3.14"
+# CUDA wheels, resolved automatically via this index (no need to remember a
+# --index-url flag by hand - a plain `pip install -r requirements.txt` now gets
+# the right build). cu128 (not cu126!) is required: cu128 wheels include kernels
+# for Blackwell/RTX 50-series (sm_120) as well as every older arch (sm_50-sm_90);
+# cu126 wheels have NO sm_120 kernels at all and fail at runtime with "no kernel
+# image is available for execution on the device" - discovered the hard way on a
+# 2026-08-12/13 RTX 5070 setup, see the checkpoint-corruption-recovery-adjacent
+# debugging session for the full story.
+--extra-index-url https://download.pytorch.org/whl/cu128
+# torch / torchvision / torch-tensorrt below are pinned as ONE mutually-consistent
+# triple, not independently - letting any of them float free is what caused a
+# multi-hour debugging session: torch was pinned here but torchvision/torch-tensorrt
+# were left unpinned, so a fresh install grabbed whatever their own latest release
+# was, and its declared torch requirement didn't match the pin here (e.g.
+# torch-tensorrt 2.7.0 requires torch<2.8.0, but pip happily installed
+# torch-tensorrt 2.13.0 which wanted a much newer torch instead - two different
+# resolution paths fighting each other with no single error pointing at the fix).
+# Before changing ANY of these three pins, check what the new versions actually
+# require against each other:
+#   pip download torch-tensorrt==<version> --no-deps -d /tmp/x && \
+#     python -c "import zipfile,glob; z=zipfile.ZipFile(glob.glob('/tmp/x/*.whl')[0]); \
+#     print(z.read([n for n in z.namelist() if n.endswith('METADATA')][0]).decode())" \
+#     | grep Requires-Dist
+# (or query https://pypi.org/pypi/<pkg>/<version>/json and read info.requires_dist)
+# torchvision tracks torch in lockstep (torch X.Y <-> torchvision 0.(Y+15) as of
+# this writing, e.g. torch 2.11 <-> torchvision 0.26) - verify, don't assume, the
+# offset can and has shifted.
+torch==2.11.0; python_version < "3.14"
 torch==2.13.0; python_version >= "3.14"
-# torch-tensorrt has no cp314 wheel; on 3.14 use network.py's backend="onnx" path instead.
-torch-tensorrt; python_version < "3.14"
+torchvision==0.26.0; python_version < "3.14"
+torchvision==0.28.0; python_version >= "3.14"
+# torch-tensorrt has no cp314 wheel; on 3.14 use network.py's backend="onnx" path
+# (raw `tensorrt` below) instead.
+torch-tensorrt==2.11.0; python_version < "3.14"
+# `tensorrt` (plain) is imported directly by network.py's ONNX/TRT-compile path.
+# Deliberately NOT given its own version pin for python<3.14: torch-tensorrt's own
+# dependency resolution pulls in the exact tensorrt version IT needs (currently
+# >=10.15.1,<10.16.0 for torch-tensorrt==2.11.0) - an independent pin here is
+# exactly the other half of the mismatch class of bug described above. On 3.14
+# there's no torch-tensorrt to defer to, so it's just left unpinned (the C++ build
+# dynamically matches whatever major version's headers+runtime are both present -
+# see engine/inference/CMakeLists.txt - so no single version is "correct" here).
+tensorrt; python_version >= "3.14"
 onnx
-tensorrt
 safetensors
 tqdm==4.67.1
 numpy==2.1.3
@@ -12,4 +49,3 @@ platformdirs
 patchelf
 chess
 tensorboard
-torchvision

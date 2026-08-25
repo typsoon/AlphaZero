@@ -40,7 +40,18 @@ execute_process(
   RESULT_VARIABLE _trt_rpath_found
   OUTPUT_VARIABLE _trt_rpath_raw
   OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-string(REGEX MATCH "[^\n]*$" _trt_rpath "${_trt_rpath_raw}")
+# Guard the REGEX MATCH: when torch_tensorrt isn't importable (e.g. not
+# installed, or a version mismatch - see requirements.txt), the python
+# subprocess above exits nonzero having printed nothing, leaving
+# _trt_rpath_raw empty. Running the regex unconditionally against that empty
+# string is a fatal CMake error ("matched an empty string"), not a silent
+# empty match - it would abort the whole configure step instead of falling
+# through to the "TensorRT not found" branch below like every other
+# torch_tensorrt-optional path in this project already does.
+set(_trt_rpath "")
+if(_trt_rpath_found EQUAL 0 AND NOT "${_trt_rpath_raw}" STREQUAL "")
+  string(REGEX MATCH "[^\n]*$" _trt_rpath "${_trt_rpath_raw}")
+endif()
 if(_trt_rpath_found EQUAL 0 AND NOT "${_trt_rpath}" STREQUAL "")
   message(STATUS "TensorRT runtime RPATH: ${_trt_rpath}")
   list(APPEND CMAKE_BUILD_RPATH ${_trt_rpath})
